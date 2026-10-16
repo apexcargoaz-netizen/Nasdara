@@ -216,14 +216,14 @@ async function prepAll(blob){
   const c=document.createElement("canvas");c.width=w;c.height=h;const g=c.getContext("2d",{willReadFrequently:true});g.drawImage(im,0,0,w,h);
   const d=g.getImageData(0,0,w,h).data;
   // coarse grids of "sign green" and "sign blue" cells, kept apart so a green sign never merges with blue sky
-  const S=5,gw=Math.ceil(w/S),gh=Math.ceil(h/S),WIN=[[75,175,0,2],[75,205,0,1.6],[150,200,.04,1.3],[195,245,.35,1]],CC=WIN.map(()=>new Uint16Array(gw*gh));
+  const S=5,gw=Math.ceil(w/S),gh=Math.ceil(h/S),WIN=[[75,175,0,2],[75,205,0,1.6],[150,200,.04,1.3],[170,240,.18,1.5,170],[195,245,.35,1]],CC=WIN.map(()=>new Uint16Array(gw*gh));
   // undo the colour cast of the TV / camera (grey-world), so pale signs still look green
   let sr=0,sg=0,sb=0,sn=0;for(let i=0;i<d.length;i+=16){const m=Math.max(d[i],d[i+1],d[i+2]);if(m<35||m>250)continue;sr+=d[i];sg+=d[i+1];sb+=d[i+2];sn++}
   const av=(sr+sg+sb)/3/Math.max(1,sn),gR=sn?av/(sr/sn):1,gG=sn?av/(sg/sn):1,gB=sn?av/(sb/sn):1;
   for(let y=0;y<h;y++)for(let x=0;x<w;x++){const i=(y*w+x)*4,r=d[i]*gR,G=d[i+1]*gG,b=d[i+2]*gB,mx=Math.max(r,G,b),mn=Math.min(r,G,b);
     if(mx<45)continue;const s=(mx-mn)/mx;if(s<.045)continue;let hu;
     if(mx===r)hu=60*(((G-b)/(mx-mn))%6);else if(mx===G)hu=60*((b-r)/(mx-mn)+2);else hu=60*((r-G)/(mx-mn)+4);if(hu<0)hu+=360;
-    const ci=((y/S)|0)*gw+((x/S)|0);for(let q=0;q<WIN.length;q++){const W_=WIN[q];if(hu>=W_[0]&&hu<=W_[1]&&s>=W_[2])CC[q][ci]++}}
+    const ci=((y/S)|0)*gw+((x/S)|0);for(let q=0;q<WIN.length;q++){const W_=WIN[q];if(hu>=W_[0]&&hu<=W_[1]&&s>=W_[2]&&(!W_[4]||mx<=W_[4]))CC[q][ci]++}}
   const dil=a=>{const o=new Uint8Array(a.length);for(let y=0;y<gh;y++)for(let x=0;x<gw;x++){let v=0;for(let dy=-1;dy<=1&&!v;dy++)for(let dx=-1;dx<=1;dx++){const X=x+dx,Y=y+dy;if(X>=0&&Y>=0&&X<gw&&Y<gh&&a[Y*gw+X]){v=1;break}}o[y*gw+x]=v}return o};
   const ero=a=>{const o=new Uint8Array(a.length);for(let y=0;y<gh;y++)for(let x=0;x<gw;x++){let v=1;for(let dy=-1;dy<=1&&v;dy++)for(let dx=-1;dx<=1;dx++){const X=x+dx,Y=y+dy;if(X<0||Y<0||X>=gw||Y>=gh||!a[Y*gw+X]){v=0;break}}o[y*gw+x]=v}return o};
   const blobs=[];
@@ -237,14 +237,14 @@ async function prepAll(blob){
       while(st.length){const q=st.pop(),qx=q%gw,qy=(q/gw)|0;n++;if(qx<x0)x0=qx;if(qy<y0)y0=qy;if(qx>x1)x1=qx;if(qy>y1)y1=qy;
         for(const[dx,dy]of[[1,0],[-1,0],[0,1],[0,-1]]){const nx=qx+dx,ny=qy+dy;if(nx<0||ny<0||nx>=gw||ny>=gh)continue;const j=ny*gw+nx;if(on[j]&&!lab[j]){lab[j]=id;st.push(j)}}}
       const bw=x1-x0+1,bh=y1-y0+1,fill=n/(bw*bh),ar=bw/bh;
-      if(!(n>=6&&fill>.5&&ar>1&&ar<7&&bw<gw*.85&&bh<gh*.7))continue;
+      if(!(n>=6&&fill>.5&&ar>1&&ar<7&&bh<gh*.75))continue;
       // a real sign has light, colourless letters inside it
       let lit=0,tot=0,su=0,sq=0,nb=0;for(let y=y0*S;y<Math.min(h,(y1+1)*S);y+=2)for(let x=x0*S;x<Math.min(w,(x1+1)*S);x+=2){const i=(y*w+x)*4,mn=Math.min(d[i],d[i+1],d[i+2]),mx=Math.max(d[i],d[i+1],d[i+2]);tot++;if(mn>110&&mx-mn<60)lit++;else{const L=(d[i]+d[i+1]+d[i+2])/3;su+=L;sq+=L*L;nb++}}
       const sd=nb?Math.sqrt(Math.max(0,sq/nb-(su/nb)**2)):99;   // a painted panel is smooth; hills and trees are busy
       const lf=lit/Math.max(1,tot);if(lf<.015)continue;
       const edge=x0<=0||y0<=0||x1>=gw-1||y1>=gh-1;
-      blobs.push({sc:n*fill*(lf>.04&&lf<.45?2:1)*bonus*(edge?.3:1)/(1+sd/25),x0:x0*S,y0:y0*S,x1:Math.min(w,(x1+1)*S),y1:Math.min(h,(y1+1)*S)})}}
-  if(window.__cropMode){window.__cropMode=false;blobs.push({sc:1e9,x0:0,y0:0,x1:w,y1:h})}   // the person boxed the sign themselves
+      blobs.push({sc:n*fill*(lf>.04&&lf<.45?2:1)*bonus*(edge?.7:1)/(1+sd/25),x0:x0*S,y0:y0*S,x1:Math.min(w,(x1+1)*S),y1:Math.min(h,(y1+1)*S)})}}
+  if(window.__cropMode){window.__cropMode=false;blobs.push({sc:1e9,x0:0,y0:0,x1:w,y1:h})}
   blobs.sort((a,b)=>b.sc-a.sc);
   // drop near-duplicates found by more than one colour window
   for(let i=0;i<blobs.length;i++)for(let j=blobs.length-1;j>i;j--){const A=blobs[i],B=blobs[j],ix=Math.max(0,Math.min(A.x1,B.x1)-Math.max(A.x0,B.x0)),iy=Math.max(0,Math.min(A.y1,B.y1)-Math.max(A.y0,B.y0)),u=(A.x1-A.x0)*(A.y1-A.y0)+(B.x1-B.x0)*(B.y1-B.y0)-ix*iy;if(ix*iy/u>.6)blobs.splice(j,1)}
@@ -259,21 +259,26 @@ async function prepAll(blob){
     const V=new Float32Array(n),H=new Uint32Array(512);let cnt=0;
     for(let i=0;i<n;i++){const r=p[i*4],G=p[i*4+1],b=p[i*4+2],mn=Math.min(r,G,b),mx=Math.max(r,G,b);const v=mn-(mx-mn)*.9;V[i]=v;
       const x=i%cv.width,y=(i/cv.width)|0;if(x>=pad&&y>=pad&&x<cv.width-pad&&y<cv.height-pad){H[Math.max(0,Math.min(511,Math.round(v)+256))]++;cnt++}}
-    let acc=0,th=150;for(let v=511;v>=0;v--){acc+=H[v];if(acc>=cnt*q){th=v-256;break}}
+    let acc=0,th=150;
+    if(q==="otsu"){let sum=0;for(let v=0;v<512;v++)sum+=v*H[v];let sB=0,wB=0,best=-1;for(let v=0;v<512;v++){wB+=H[v];if(!wB)continue;const wF=cnt-wB;if(!wF)break;sB+=v*H[v];const mB=sB/wB,mF=(sum-sB)/wF,bt=wB*wF*(mB-mF)**2;if(bt>best){best=bt;th=v+1-256}}
+      // never call more than 35% of the sign "letters"
+      let a2=0,cap=th;for(let v=511;v>=0;v--){a2+=H[v];if(a2>=cnt*.35){cap=v-256;break}}th=Math.max(th,cap)}
+    else for(let v=511;v>=0;v--){acc+=H[v];if(acc>=cnt*q){th=v-256;break}}
     for(let i=0;i<n;i++){const x=V[i]>=th?0:255;p[i*4]=p[i*4+1]=p[i*4+2]=x;p[i*4+3]=255}
     o.putImageData(id2,0,0);return cv};
   blobs.slice(0,6).forEach((b,bi)=>{const bw=b.x1-b.x0,bh=b.y1-b.y0,px=bw*.05,py=bh*.07;
     const X=Math.max(0,b.x0-px),Y=Math.max(0,b.y0-py),Wd=Math.min(w,b.x1+px)-X,Ht=Math.min(h,b.y1+py)-Y;
-    const full=cut(X,Y,Wd,Ht,1500),low=cut(X,Y+Ht*.45,Wd,Ht*.55,1500);
-    const pri=0;
-    out.push({c:bin(full,.12),psm:"6",pri:pri+bi*.1,tag:"sign "+(bi+1)});
-    out.push({c:bin(full,.2),psm:"6",pri:pri+3+bi*.1,tag:"sign "+(bi+1)+", bold"});
-    out.push({c:bin(full,.07),psm:"6",pri:pri+5+bi*.1,tag:"sign "+(bi+1)+", thin"});
-    out.push({c:bin(low,.12),psm:"7",pri:pri+7+bi*.1,tag:"sign "+(bi+1)+" bottom line"});
+    let f_=null,l_=null;const full=()=>f_||(f_=cut(X,Y,Wd,Ht,1500)),low=()=>l_||(l_=cut(X,Y+Ht*.45,Wd,Ht*.55,1500));   // made only when needed
+    const P=r=>bi+r*1.1;   // mix signs and clean-ups so the likeliest few get tried first
+    out.push({mk:()=>bin(full(),"otsu"),psm:"6",pri:P(0),tag:"sign "+(bi+1)});
+    out.push({mk:()=>bin(full(),.12),psm:"6",pri:P(.5),tag:"sign "+(bi+1)+", fine"});
+    out.push({mk:()=>bin(full(),.2),psm:"6",pri:P(1.5),tag:"sign "+(bi+1)+", bold"});
+    out.push({mk:()=>bin(full(),.07),psm:"6",pri:P(2.5),tag:"sign "+(bi+1)+", thin"});
+    out.push({mk:()=>bin(low(),.12),psm:"7",pri:P(3.5),tag:"sign "+(bi+1)+" bottom line"});
   });
   // nothing that looks like a sign: read the whole photo, scattered-text mode
-  {const kk=Math.min(1,2000/Math.max(W0,H0)),cv=document.createElement("canvas");cv.width=Math.round(W0*kk);cv.height=Math.round(H0*kk);const o=cv.getContext("2d");
-   o.filter="grayscale(1) contrast(1.5)";o.drawImage(im,0,0,cv.width,cv.height);out.push({c:cv,psm:"11",pri:50,tag:"whole photo"})}
+  out.push({mk:()=>{const kk=Math.min(1,2000/Math.max(W0,H0)),cv=document.createElement("canvas");cv.width=Math.round(W0*kk);cv.height=Math.round(H0*kk);const o=cv.getContext("2d");
+   o.filter="grayscale(1) contrast(1.5)";o.drawImage(im,0,0,cv.width,cv.height);return cv},psm:"11",pri:50,tag:"whole photo"});
   out.sort((a,b)=>a.pri-b.pri);out.found=blobs.length;return out}
 
 const sample={
@@ -290,10 +295,10 @@ const sample={
     D(vars.found?`✓ Found ${vars.found>1?"possible signs":"the sign"} on the photo, zooming in…`:"No sign panel spotted, reading the whole photo…");
     const worker=T.createWorker?(window.__tw||(window.__tw=await T.createWorker("eng"))):null;
     if(worker)try{await worker.setParameters({tessedit_char_whitelist:"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz-' 0123456789"})}catch{}
-    let text="",hits=[],bestSc=0,tries=0;const t0=Date.now(),list=vars.slice(0,11);vars.forEach(v=>{if(v.tag==="whole photo"&&!list.includes(v))list.push(v)});const LIMIT=list.length;
+    let text="",hits=[],bestSc=0,tries=0;const t0=Date.now(),list=vars.slice(0,14);vars.forEach(v=>{if(v.tag==="whole photo"&&!list.includes(v))list.push(v)});const LIMIT=list.length;
     for(const v of list){tries++;if(Date.now()-t0>40000)break;
-      D(`Reading try ${tries}/${LIMIT} (${v.tag})…`);window.__lastCrop=v.c;
-      let r;try{if(worker){await worker.setParameters({tessedit_pageseg_mode:v.psm});r=await worker.recognize(v.c)}else r=await T.recognize(v.c,"eng")}catch(e){continue}
+      D(`Reading try ${tries}/${LIMIT} (${v.tag})…`);let cvs;try{cvs=v.c||v.mk()}catch(e){continue}window.__lastCrop=cvs;
+      let r;try{if(worker){await worker.setParameters({tessedit_pageseg_mode:v.psm});r=await worker.recognize(cvs)}else r=await T.recognize(cvs,"eng")}catch(e){continue}
       const t=(r&&r.data&&r.data.text||"").trim(),h=bestNames(t,names),sc=h.length?h[0].sc:0;
       if(sc>bestSc||(!text&&t)){bestSc=sc;hits=h;text=t}
       if(sc>=.88)break}
