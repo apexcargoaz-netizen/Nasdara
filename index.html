@@ -97,10 +97,40 @@ function bestNames(text,names){
     if(sc>=.7)out.push({name:n,sc})});
   out.sort((a,b)=>b.sc-a.sc);if(!out.length)return out;const top=out[0].sc;
   return out.filter(o=>o.sc>=top-.08).slice(0,4)}
-async function prep(blob){// grayscale + contrast boost helps with photos of a TV screen
-  const im=await (window.__loadPic?window.__loadPic(blob):createImageBitmap(blob));const w=im.width||im.naturalWidth,h=im.height||im.naturalHeight;
-  const k=Math.min(1,1600/Math.max(w,h)),c=document.createElement("canvas");c.width=Math.round(w*k);c.height=Math.round(h*k);
-  const g=c.getContext("2d");g.filter="grayscale(1) contrast(1.6)";g.drawImage(im,0,0,c.width,c.height);return c}
+// Find the road sign (green or blue panel with white letters), cut it out, enlarge it, make the letters black on white.
+async function prep(blob){
+  const im=await (window.__loadPic?window.__loadPic(blob):createImageBitmap(blob));const W0=im.width||im.naturalWidth,H0=im.height||im.naturalHeight;
+  const k=Math.min(1,900/Math.max(W0,H0)),w=Math.round(W0*k),h=Math.round(H0*k);
+  const c=document.createElement("canvas");c.width=w;c.height=h;const g=c.getContext("2d",{willReadFrequently:true});g.drawImage(im,0,0,w,h);
+  const d=g.getImageData(0,0,w,h).data;const M=new Uint8Array(w*h);
+  for(let i=0;i<w*h;i++){const r=d[i*4],G=d[i*4+1],b=d[i*4+2];
+    const green=G>r+25&&G>=b-5&&G>60, blue=b>r+30&&b>G+5&&b>70; if(green||blue)M[i]=1}
+  // largest blob of sign colour by flood fill on a coarse grid
+  const S=4,gw=Math.ceil(w/S),gh=Math.ceil(h/S),C=new Uint8Array(gw*gh);
+  for(let y=0;y<h;y++)for(let x=0;x<w;x++)if(M[y*w+x])C[((y/S)|0)*gw+((x/S)|0)]++;
+  const on=C.map(v=>v>=S*S*0.45?1:0),lab=new Int32Array(gw*gh);let best=null,id=0;
+  for(let i=0;i<gw*gh;i++){if(!on[i]||lab[i])continue;id++;const st=[i];lab[i]=id;let n=0,x0=1e9,y0=1e9,x1=0,y1=0;
+    while(st.length){const q=st.pop(),qx=q%gw,qy=(q/gw)|0;n++;x0=Math.min(x0,qx);y0=Math.min(y0,qy);x1=Math.max(x1,qx);y1=Math.max(y1,qy);
+      for(const[dx,dy]of[[1,0],[-1,0],[0,1],[0,-1]]){const nx=qx+dx,ny=qy+dy;if(nx<0||ny<0||nx>=gw||ny>=gh)continue;const j=ny*gw+nx;if(on[j]&&!lab[j]){lab[j]=id;st.push(j)}}}
+    const bw=x1-x0+1,bh=y1-y0+1,fill=n/(bw*bh),ar=bw/bh;
+    // a sign: fairly solid, wider than tall, not the whole screen (grass)
+    if(n>=12&&fill>.55&&ar>1.1&&ar<6&&bw<gw*.8){const sc=n*fill;if(!best||sc>best.sc)best={sc,x0:x0*S,y0:y0*S,x1:(x1+1)*S,y1:(y1+1)*S}}}
+  const out=document.createElement("canvas");let sx=0,sy=0,sw=w,sh=h;
+  if(best){const px=(best.x1-best.x0)*.04,py=(best.y1-best.y0)*.06;sx=Math.max(0,best.x0-px);sy=Math.max(0,best.y0-py);sw=Math.min(w,best.x1+px)-sx;sh=Math.min(h,best.y1+py)-sy}
+  const sk=best?Math.min(4,1400/sw):1;out.width=Math.round(sw/k*sk*k);out.height=Math.round(sh/k*sk*k);
+  const o=out.getContext("2d",{willReadFrequently:true});o.imageSmoothingQuality="high";
+  o.drawImage(im,sx/k,sy/k,sw/k,sh/k,0,0,out.width,out.height);
+  if(best){// light letters on a coloured panel -> black letters on white
+    const id2=o.getImageData(0,0,out.width,out.height),p=id2.data;
+    // letters = the brightest, least-coloured pixels on the panel; pick the cut-off from this photo
+    const H=new Uint32Array(256);let n=0;
+    for(let i=0;i<p.length;i+=4){const mn=Math.min(p[i],p[i+1],p[i+2]);H[mn]++;n++}
+    let acc=0,cut=170;for(let v=255;v>=0;v--){acc+=H[v];if(acc>=n*.10){cut=Math.max(130,Math.min(225,v));break}}
+    for(let i=0;i<p.length;i+=4){const r=p[i],G=p[i+1],b=p[i+2],mn=Math.min(r,G,b),mx=Math.max(r,G,b);
+      const white=mn>=cut&&mx-mn<45;const v=white?0:255;p[i]=p[i+1]=p[i+2]=v}
+    o.putImageData(id2,0,0)}
+  else{o.filter="grayscale(1) contrast(1.6)";o.drawImage(out,0,0)}
+  out.__found=!!best;return out}
 const sample={
   limits:async()=>({images:{maxCount:1,mediaTypes:["image/jpeg","image/png","image/webp"]}}),
   async json(prompt,opts){
@@ -109,8 +139,10 @@ const sample={
     const D=window.__diag||(()=>{});
     D(window.Tesseract?"Sign reader ready":"Downloading the sign reader (first time only, about 10 MB)…");
     let T;try{T=await loadTess()}catch(e){D("\u2717 Couldn't download the sign reader. Check your internet.");throw e}
-    const img=await prep(opts.images[0]);D("Reading text on the photo…");
-    const r=await T.recognize(img,"eng");const text=(r&&r.data&&r.data.text||"").trim();
+    const img=await prep(opts.images[0]);D(img.__found?"✓ Found the sign on the photo, zooming in…":"No sign panel spotted, reading the whole photo…");
+    window.__lastCrop=img;D("Reading text on the photo…");
+    let r;try{if(T.createWorker){if(!window.__tw){window.__tw=await T.createWorker("eng");await window.__tw.setParameters({tessedit_char_whitelist:"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz-' 0123456789",tessedit_pageseg_mode:img.__found?"6":"3"})}r=await window.__tw.recognize(img)}else r=await T.recognize(img,"eng")}
+    catch(e){r=await T.recognize(img,"eng")}const text=(r&&r.data&&r.data.text||"").trim();
     const hits=bestNames(text,names);
     D(`Text found: "${text.replace(/\s+/g," ").slice(0,60)||"(nothing)"}"`);
     const shown=text.split(/\n+/).filter(l=>/[A-Za-z]{3}/.test(l)).slice(0,2).join(" ").slice(0,80);
