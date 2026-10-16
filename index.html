@@ -155,6 +155,7 @@ const api={
   setAdminName(n){door.adminName=n}
 };
 window.__door=api;
+window.addEventListener("hashchange",()=>{if(/admin=/.test(location.hash))location.reload()});
 // admin key: arrives once through a private link (#admin=...), then lives only on this phone
 (async()=>{try{const h=location.hash.match(/admin=([A-Za-z0-9_-]{30,60})/);if(h){ls.set(AKEY,h[1]);history.replaceState(null,"",location.pathname+location.search)}
   const d=ls.get(AKEY);if(d&&SUB){door.admin=await SUB.importKey("jwk",{...ADMIN_PUB,d,ext:true},ALG,false,["sign"]);
@@ -206,40 +207,75 @@ function bestNames(text,names){
     if(sc>=.7)out.push({name:n,sc})});
   out.sort((a,b)=>b.sc-a.sc);if(!out.length)return out;const top=out[0].sc;
   return out.filter(o=>o.sc>=top-.08).slice(0,4)}
-// Find the road sign (green or blue panel with white letters), cut it out, enlarge it, make the letters black on white.
-async function prep(blob){
-  const im=await (window.__loadPic?window.__loadPic(blob):createImageBitmap(blob));const W0=im.width||im.naturalWidth,H0=im.height||im.naturalHeight;
-  const k=Math.min(1,900/Math.max(W0,H0)),w=Math.round(W0*k),h=Math.round(H0*k);
+// Find road-sign panels (green or blue with light letters), cut each out of the full-size photo,
+// clean it up a few different ways, and hand back a list of pictures to read, best guesses first.
+async function prepAll(blob){
+  const im=await (window.__loadPic?window.__loadPic(blob):createImageBitmap(blob));
+  const W0=im.width||im.naturalWidth,H0=im.height||im.naturalHeight;
+  const k=Math.min(1,1400/Math.max(W0,H0)),w=Math.round(W0*k),h=Math.round(H0*k);
   const c=document.createElement("canvas");c.width=w;c.height=h;const g=c.getContext("2d",{willReadFrequently:true});g.drawImage(im,0,0,w,h);
-  const d=g.getImageData(0,0,w,h).data;const M=new Uint8Array(w*h);
-  for(let i=0;i<w*h;i++){const r=d[i*4],G=d[i*4+1],b=d[i*4+2];
-    const green=G>r+25&&G>=b-5&&G>60, blue=b>r+30&&b>G+5&&b>70; if(green||blue)M[i]=1}
-  // largest blob of sign colour by flood fill on a coarse grid
-  const S=4,gw=Math.ceil(w/S),gh=Math.ceil(h/S),C=new Uint8Array(gw*gh);
-  for(let y=0;y<h;y++)for(let x=0;x<w;x++)if(M[y*w+x])C[((y/S)|0)*gw+((x/S)|0)]++;
-  const on=C.map(v=>v>=S*S*0.45?1:0),lab=new Int32Array(gw*gh);let best=null,id=0;
-  for(let i=0;i<gw*gh;i++){if(!on[i]||lab[i])continue;id++;const st=[i];lab[i]=id;let n=0,x0=1e9,y0=1e9,x1=0,y1=0;
-    while(st.length){const q=st.pop(),qx=q%gw,qy=(q/gw)|0;n++;x0=Math.min(x0,qx);y0=Math.min(y0,qy);x1=Math.max(x1,qx);y1=Math.max(y1,qy);
-      for(const[dx,dy]of[[1,0],[-1,0],[0,1],[0,-1]]){const nx=qx+dx,ny=qy+dy;if(nx<0||ny<0||nx>=gw||ny>=gh)continue;const j=ny*gw+nx;if(on[j]&&!lab[j]){lab[j]=id;st.push(j)}}}
-    const bw=x1-x0+1,bh=y1-y0+1,fill=n/(bw*bh),ar=bw/bh;
-    // a sign: fairly solid, wider than tall, not the whole screen (grass)
-    if(n>=12&&fill>.55&&ar>1.1&&ar<6&&bw<gw*.8){const sc=n*fill;if(!best||sc>best.sc)best={sc,x0:x0*S,y0:y0*S,x1:(x1+1)*S,y1:(y1+1)*S}}}
-  const out=document.createElement("canvas");let sx=0,sy=0,sw=w,sh=h;
-  if(best){const px=(best.x1-best.x0)*.04,py=(best.y1-best.y0)*.06;sx=Math.max(0,best.x0-px);sy=Math.max(0,best.y0-py);sw=Math.min(w,best.x1+px)-sx;sh=Math.min(h,best.y1+py)-sy}
-  const sk=best?Math.min(4,1400/sw):1;out.width=Math.round(sw/k*sk*k);out.height=Math.round(sh/k*sk*k);
-  const o=out.getContext("2d",{willReadFrequently:true});o.imageSmoothingQuality="high";
-  o.drawImage(im,sx/k,sy/k,sw/k,sh/k,0,0,out.width,out.height);
-  if(best){// light letters on a coloured panel -> black letters on white
-    const id2=o.getImageData(0,0,out.width,out.height),p=id2.data;
-    // letters = the brightest, least-coloured pixels on the panel; pick the cut-off from this photo
-    const H=new Uint32Array(256);let n=0;
-    for(let i=0;i<p.length;i+=4){const mn=Math.min(p[i],p[i+1],p[i+2]);H[mn]++;n++}
-    let acc=0,cut=170;for(let v=255;v>=0;v--){acc+=H[v];if(acc>=n*.10){cut=Math.max(130,Math.min(225,v));break}}
-    for(let i=0;i<p.length;i+=4){const r=p[i],G=p[i+1],b=p[i+2],mn=Math.min(r,G,b),mx=Math.max(r,G,b);
-      const white=mn>=cut&&mx-mn<45;const v=white?0:255;p[i]=p[i+1]=p[i+2]=v}
-    o.putImageData(id2,0,0)}
-  else{o.filter="grayscale(1) contrast(1.6)";o.drawImage(out,0,0)}
-  out.__found=!!best;return out}
+  const d=g.getImageData(0,0,w,h).data;
+  // coarse grids of "sign green" and "sign blue" cells, kept apart so a green sign never merges with blue sky
+  const S=5,gw=Math.ceil(w/S),gh=Math.ceil(h/S),WIN=[[75,175,0,2],[75,205,0,1.6],[150,200,.04,1.3],[195,245,.35,1]],CC=WIN.map(()=>new Uint16Array(gw*gh));
+  // undo the colour cast of the TV / camera (grey-world), so pale signs still look green
+  let sr=0,sg=0,sb=0,sn=0;for(let i=0;i<d.length;i+=16){const m=Math.max(d[i],d[i+1],d[i+2]);if(m<35||m>250)continue;sr+=d[i];sg+=d[i+1];sb+=d[i+2];sn++}
+  const av=(sr+sg+sb)/3/Math.max(1,sn),gR=sn?av/(sr/sn):1,gG=sn?av/(sg/sn):1,gB=sn?av/(sb/sn):1;
+  for(let y=0;y<h;y++)for(let x=0;x<w;x++){const i=(y*w+x)*4,r=d[i]*gR,G=d[i+1]*gG,b=d[i+2]*gB,mx=Math.max(r,G,b),mn=Math.min(r,G,b);
+    if(mx<45)continue;const s=(mx-mn)/mx;if(s<.045)continue;let hu;
+    if(mx===r)hu=60*(((G-b)/(mx-mn))%6);else if(mx===G)hu=60*((b-r)/(mx-mn)+2);else hu=60*((r-G)/(mx-mn)+4);if(hu<0)hu+=360;
+    const ci=((y/S)|0)*gw+((x/S)|0);for(let q=0;q<WIN.length;q++){const W_=WIN[q];if(hu>=W_[0]&&hu<=W_[1]&&s>=W_[2])CC[q][ci]++}}
+  const dil=a=>{const o=new Uint8Array(a.length);for(let y=0;y<gh;y++)for(let x=0;x<gw;x++){let v=0;for(let dy=-1;dy<=1&&!v;dy++)for(let dx=-1;dx<=1;dx++){const X=x+dx,Y=y+dy;if(X>=0&&Y>=0&&X<gw&&Y<gh&&a[Y*gw+X]){v=1;break}}o[y*gw+x]=v}return o};
+  const ero=a=>{const o=new Uint8Array(a.length);for(let y=0;y<gh;y++)for(let x=0;x<gw;x++){let v=1;for(let dy=-1;dy<=1&&v;dy++)for(let dx=-1;dx<=1;dx++){const X=x+dx,Y=y+dy;if(X<0||Y<0||X>=gw||Y>=gh||!a[Y*gw+X]){v=0;break}}o[y*gw+x]=v}return o};
+  const blobs=[];
+  for(let q=0;q<WIN.length*2;q++){const Cc=CC[q>>1],bonus=WIN[q>>1][3];
+    let on=new Uint8Array(gw*gh);for(let i=0;i<on.length;i++)on[i]=Cc[i]>=S*S*.35?1:0;
+    on=ero(ero(dil(dil(on))));          // close the holes the letters leave
+    if(q&1)on=dil(dil(ero(ero(on))));   // second try: also cut thin bridges to sky or grass
+    
+    const lab=new Int32Array(gw*gh);let id=0;
+    for(let i=0;i<gw*gh;i++){if(!on[i]||lab[i])continue;id++;const st=[i];lab[i]=id;let n=0,x0=1e9,y0=1e9,x1=0,y1=0;
+      while(st.length){const q=st.pop(),qx=q%gw,qy=(q/gw)|0;n++;if(qx<x0)x0=qx;if(qy<y0)y0=qy;if(qx>x1)x1=qx;if(qy>y1)y1=qy;
+        for(const[dx,dy]of[[1,0],[-1,0],[0,1],[0,-1]]){const nx=qx+dx,ny=qy+dy;if(nx<0||ny<0||nx>=gw||ny>=gh)continue;const j=ny*gw+nx;if(on[j]&&!lab[j]){lab[j]=id;st.push(j)}}}
+      const bw=x1-x0+1,bh=y1-y0+1,fill=n/(bw*bh),ar=bw/bh;
+      if(!(n>=6&&fill>.5&&ar>1&&ar<7&&bw<gw*.85&&bh<gh*.7))continue;
+      // a real sign has light, colourless letters inside it
+      let lit=0,tot=0,su=0,sq=0,nb=0;for(let y=y0*S;y<Math.min(h,(y1+1)*S);y+=2)for(let x=x0*S;x<Math.min(w,(x1+1)*S);x+=2){const i=(y*w+x)*4,mn=Math.min(d[i],d[i+1],d[i+2]),mx=Math.max(d[i],d[i+1],d[i+2]);tot++;if(mn>110&&mx-mn<60)lit++;else{const L=(d[i]+d[i+1]+d[i+2])/3;su+=L;sq+=L*L;nb++}}
+      const sd=nb?Math.sqrt(Math.max(0,sq/nb-(su/nb)**2)):99;   // a painted panel is smooth; hills and trees are busy
+      const lf=lit/Math.max(1,tot);if(lf<.015)continue;
+      const edge=x0<=0||y0<=0||x1>=gw-1||y1>=gh-1;
+      blobs.push({sc:n*fill*(lf>.04&&lf<.45?2:1)*bonus*(edge?.3:1)/(1+sd/25),x0:x0*S,y0:y0*S,x1:Math.min(w,(x1+1)*S),y1:Math.min(h,(y1+1)*S)})}}
+  if(window.__cropMode){window.__cropMode=false;blobs.push({sc:1e9,x0:0,y0:0,x1:w,y1:h})}   // the person boxed the sign themselves
+  blobs.sort((a,b)=>b.sc-a.sc);
+  // drop near-duplicates found by more than one colour window
+  for(let i=0;i<blobs.length;i++)for(let j=blobs.length-1;j>i;j--){const A=blobs[i],B=blobs[j],ix=Math.max(0,Math.min(A.x1,B.x1)-Math.max(A.x0,B.x0)),iy=Math.max(0,Math.min(A.y1,B.y1)-Math.max(A.y0,B.y0)),u=(A.x1-A.x0)*(A.y1-A.y0)+(B.x1-B.x0)*(B.y1-B.y0)-ix*iy;if(ix*iy/u>.6)blobs.splice(j,1)}
+  const out=[];
+  // cut a region out of the FULL-size photo and scale it to a good reading size
+  const cut=(bx,by,bw,bh,tw)=>{const sx=bx/k,sy=by/k,sw=bw/k,sh=bh/k,sc=Math.max(.5,Math.min(5,tw/sw));
+    const cv=document.createElement("canvas");cv.width=Math.round(sw*sc);cv.height=Math.round(sh*sc);const o=cv.getContext("2d",{willReadFrequently:true});
+    o.imageSmoothingQuality="high";o.filter=sc>2?"blur(1px)":"none";o.drawImage(im,sx,sy,sw,sh,0,0,cv.width,cv.height);return cv};
+  // light, colourless letters -> black on white; q = how much of the picture counts as letters
+  const bin=(src,q)=>{const cv=document.createElement("canvas"),pad=24;cv.width=src.width+pad*2;cv.height=src.height+pad*2;const o=cv.getContext("2d",{willReadFrequently:true});
+    o.fillStyle="#000";o.fillRect(0,0,cv.width,cv.height);o.drawImage(src,pad,pad);const id2=o.getImageData(0,0,cv.width,cv.height),p=id2.data,n=p.length/4;
+    const V=new Float32Array(n),H=new Uint32Array(512);let cnt=0;
+    for(let i=0;i<n;i++){const r=p[i*4],G=p[i*4+1],b=p[i*4+2],mn=Math.min(r,G,b),mx=Math.max(r,G,b);const v=mn-(mx-mn)*.9;V[i]=v;
+      const x=i%cv.width,y=(i/cv.width)|0;if(x>=pad&&y>=pad&&x<cv.width-pad&&y<cv.height-pad){H[Math.max(0,Math.min(511,Math.round(v)+256))]++;cnt++}}
+    let acc=0,th=150;for(let v=511;v>=0;v--){acc+=H[v];if(acc>=cnt*q){th=v-256;break}}
+    for(let i=0;i<n;i++){const x=V[i]>=th?0:255;p[i*4]=p[i*4+1]=p[i*4+2]=x;p[i*4+3]=255}
+    o.putImageData(id2,0,0);return cv};
+  blobs.slice(0,6).forEach((b,bi)=>{const bw=b.x1-b.x0,bh=b.y1-b.y0,px=bw*.05,py=bh*.07;
+    const X=Math.max(0,b.x0-px),Y=Math.max(0,b.y0-py),Wd=Math.min(w,b.x1+px)-X,Ht=Math.min(h,b.y1+py)-Y;
+    const full=cut(X,Y,Wd,Ht,1500),low=cut(X,Y+Ht*.45,Wd,Ht*.55,1500);
+    const pri=0;
+    out.push({c:bin(full,.12),psm:"6",pri:pri+bi*.1,tag:"sign "+(bi+1)});
+    out.push({c:bin(full,.2),psm:"6",pri:pri+3+bi*.1,tag:"sign "+(bi+1)+", bold"});
+    out.push({c:bin(full,.07),psm:"6",pri:pri+5+bi*.1,tag:"sign "+(bi+1)+", thin"});
+    out.push({c:bin(low,.12),psm:"7",pri:pri+7+bi*.1,tag:"sign "+(bi+1)+" bottom line"});
+  });
+  // nothing that looks like a sign: read the whole photo, scattered-text mode
+  {const kk=Math.min(1,2000/Math.max(W0,H0)),cv=document.createElement("canvas");cv.width=Math.round(W0*kk);cv.height=Math.round(H0*kk);const o=cv.getContext("2d");
+   o.filter="grayscale(1) contrast(1.5)";o.drawImage(im,0,0,cv.width,cv.height);out.push({c:cv,psm:"11",pri:50,tag:"whole photo"})}
+  out.sort((a,b)=>a.pri-b.pri);out.found=blobs.length;return out}
+
 const sample={
   limits:async()=>({images:{maxCount:1,mediaTypes:["image/jpeg","image/png","image/webp"]}}),
   async json(prompt,opts){
@@ -248,12 +284,20 @@ const sample={
     const D=window.__diag||(()=>{});
     D(window.Tesseract?"Sign reader ready":"Downloading the sign reader (first time only, about 10 MB)…");
     let T;try{T=await loadTess()}catch(e){D("\u2717 Couldn't download the sign reader. Check your internet.");throw e}
-    const img=await prep(opts.images[0]);D(img.__found?"✓ Found the sign on the photo, zooming in…":"No sign panel spotted, reading the whole photo…");
-    window.__lastCrop=img;D("Reading text on the photo…");
-    let r;try{if(T.createWorker){if(!window.__tw){window.__tw=await T.createWorker("eng");await window.__tw.setParameters({tessedit_char_whitelist:"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz-' 0123456789",tessedit_pageseg_mode:img.__found?"6":"3"})}r=await window.__tw.recognize(img)}else r=await T.recognize(img,"eng")}
-    catch(e){r=await T.recognize(img,"eng")}const text=(r&&r.data&&r.data.text||"").trim();
-    const hits=bestNames(text,names);
-    D(`Text found: "${text.replace(/\s+/g," ").slice(0,60)||"(nothing)"}"`);
+    // read the full-size photo when the map handed it over (more detail than the shrunk copy)
+    const src=window.__origPic||opts.images[0];window.__origPic=null;
+    let vars;try{vars=await prepAll(src)}catch(e){vars=await prepAll(opts.images[0])}
+    D(vars.found?`✓ Found ${vars.found>1?"possible signs":"the sign"} on the photo, zooming in…`:"No sign panel spotted, reading the whole photo…");
+    const worker=T.createWorker?(window.__tw||(window.__tw=await T.createWorker("eng"))):null;
+    if(worker)try{await worker.setParameters({tessedit_char_whitelist:"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz-' 0123456789"})}catch{}
+    let text="",hits=[],bestSc=0,tries=0;const t0=Date.now(),list=vars.slice(0,11);vars.forEach(v=>{if(v.tag==="whole photo"&&!list.includes(v))list.push(v)});const LIMIT=list.length;
+    for(const v of list){tries++;if(Date.now()-t0>40000)break;
+      D(`Reading try ${tries}/${LIMIT} (${v.tag})…`);window.__lastCrop=v.c;
+      let r;try{if(worker){await worker.setParameters({tessedit_pageseg_mode:v.psm});r=await worker.recognize(v.c)}else r=await T.recognize(v.c,"eng")}catch(e){continue}
+      const t=(r&&r.data&&r.data.text||"").trim(),h=bestNames(t,names),sc=h.length?h[0].sc:0;
+      if(sc>bestSc||(!text&&t)){bestSc=sc;hits=h;text=t}
+      if(sc>=.88)break}
+    D(`Text found: "${text.replace(/\s+/g," ").slice(0,60)||"(nothing)"}"${bestSc?` (match ${Math.round(bestSc*100)}%)`:""}`);
     const shown=text.split(/\n+/).filter(l=>/[A-Za-z]{3}/.test(l)).slice(0,2).join(" ").slice(0,80);
     return{sign_text:shown||text.slice(0,80),places:hits.map(h=>({name:h.name,kind:"entering",distance_km:null})),no_sign:!hits.length}}
 };
@@ -474,7 +518,7 @@ const S = {
   ruler:[], draft:[],
   pings:[], peers:[],
   callsign:ls.get("callsign",""), color:ls.get("color",COLORS[Math.floor(Math.random()*COLORS.length)]),
-  myPos:null, uid:null, db:null, room:null, user:null, assets:null, shared:false, canWrite:true,
+  myPos:(()=>{const p=ls.get("myPos",null);return Array.isArray(p)&&p.length===2&&p.every(v=>isFinite(v))?p:null})(), uid:null, db:null, room:null, user:null, assets:null, shared:false, canWrite:true,
   mapImg:null, mapUrl:null, follow:null,
 };
 ls.set("color",S.color);
@@ -738,7 +782,7 @@ function draw(now){
     pts.forEach(([x,y])=>{const[sx,sy]=toS(x,y);ctx.beginPath();ctx.arc(sx,sy,6,0,7);ctx.fillStyle="#fff";ctx.fill();ctx.lineWidth=2;ctx.strokeStyle="#1b1610";ctx.stroke()});
   }
   // pins
-  const critOn=S.critters&&V.s>.025&&!matchMedia("(prefers-reduced-motion: reduce)").matches;let crit=false;
+  const critOn=S.critters&&V.s>.025;let crit=false;
   if(critOn)for(const p of S.pins.values()){ if(S.hidden.has(p.type)||S.hideG.has(p.g))continue; if(drawCritter(p,now))crit=true }
   S.crit=crit;
   for(const p of S.pins.values()){ if(S.hidden.has(p.type)||S.hideG.has(p.g))continue; drawPin(p) }
@@ -752,7 +796,7 @@ function draw(now){
       label(`📍 ${String(sn.place).slice(0,22)} · ${mins<1?"just now":mins+"m ago"}`,sx,sy+37,"#e6b24f")}});
   if(!S.room&&S.myPos){const[sx,sy]=toS(...S.myPos);ctx.beginPath();ctx.arc(sx,sy,8,0,7);ctx.fillStyle=S.color;ctx.fill();ctx.lineWidth=2.5;ctx.strokeStyle="#fff";ctx.stroke();label(String(S.callsign||"You").slice(0,16),sx,sy+22,"#fff")}
   // go-to-coordinates marker
-  if(S.mark){const age=now-S.mark.t;if(age>12000)S.mark=null;else{const[mx,my]=toS(S.mark.x,S.mark.y),ph=(age/1000)%1;
+  if(S.mark){const age=Math.max(0,now-S.mark.t);if(age>12000)S.mark=null;else{const[mx,my]=toS(S.mark.x,S.mark.y),ph=(age/1000)%1;
     ctx.beginPath();ctx.arc(mx,my,8+ph*30,0,7);ctx.strokeStyle="#e6b24f";ctx.globalAlpha=1-ph;ctx.lineWidth=3;ctx.stroke();ctx.globalAlpha=1;
     ctx.strokeStyle="#fff";ctx.lineWidth=2;ctx.beginPath();ctx.moveTo(mx-12,my);ctx.lineTo(mx+12,my);ctx.moveTo(mx,my-12);ctx.lineTo(mx,my+12);ctx.stroke();S._mk=true}}
   // navigation target
@@ -761,7 +805,7 @@ function draw(now){
   // pings
   let anim=!!S._mk||S.peers.some(p=>p.presence&&p.presence.pos);S._mk=false;
   S.pings=S.pings.filter(pg=>now-pg.at<(pg.kind==="sign"?15000:PING_MS));
-  S.pings.forEach(pg=>{const life=pg.kind==="sign"?15000:PING_MS,age=(now-pg.at)/1000,fade=Math.min(1,(life/1000-age)/1.2);const[sx,sy]=toS(pg.x,pg.y);
+  S.pings.forEach(pg=>{const life=pg.kind==="sign"?15000:PING_MS,age=Math.max(0,(now-pg.at)/1000),fade=Math.min(1,(life/1000-age)/1.2);const[sx,sy]=toS(pg.x,pg.y);
     const em=pg.kind==="sign"?"📍":EMO_OK(pg.e)||(pg.kind==="danger"?"⚠️":"📍");const col=EMO_COL[em]||(pg.kind==="danger"?"#e2563d":pg.kind==="sign"?"#e6b24f":"#3fb8a8");
     // ripples
     for(let k=0;k<3;k++){const ph=(age*1.1+k/3)%1;ctx.beginPath();ctx.arc(sx,sy,14+ph*70,0,7);ctx.strokeStyle=col;ctx.globalAlpha=(1-ph)*.9*fade;ctx.lineWidth=3;ctx.stroke()}
@@ -1464,7 +1508,7 @@ function sendPing(x,y,kind,e){e=kind==="danger"?"⚠️":EMO_OK(e)||S.emo;if(e==
   if(S.room){S.room.emit("ping",{x:pg.x,y:pg.y,kind,e,name:S.callsign||"Friend"}).then(()=>toast(`${e} ${EMO_N[e]} ping sent`),()=>toast("Ping only shown on your screen"))}
   else toast("Ping shown here only (friends offline)");
 }
-function setMyPos(x,y,quiet){S.myPos=[Math.round(x),Math.round(y)];if(S.room)S.room.presence({pos:S.myPos}).catch(()=>{});if(S.nav){S.route=findRoute(S.myPos,[S.nav.x,S.nav.y]);S.step=0;centerOn(S.myPos[0],S.myPos[1])}updateNav();dirty();if(!quiet)toast(S.nav?"Position updated. Route recalculated":"Your position is shared while this map is open")}
+function setMyPos(x,y,quiet){S.myPos=[Math.round(x),Math.round(y)];ls.set("myPos",S.myPos);if(S.room)S.room.presence({pos:S.myPos}).catch(()=>{});if(S.nav){S.route=findRoute(S.myPos,[S.nav.x,S.nav.y]);S.step=0;centerOn(S.myPos[0],S.myPos[1])}updateNav();dirty();if(!quiet)toast(S.nav?"Position updated. Route recalculated":"Your position is shared while this map is open")}
 
 /* ---------- GPS mode: sign reader, destinations, road routing ---------- */
 const camIn=document.getElementById("camIn"),navEl=document.getElementById("navbar");
@@ -1565,8 +1609,9 @@ function matchName(txt){const t=norm(txt);if(t.length<2)return[];
 function nearestPlace(pos){let best=null,bd=1e9;PLACES.forEach(p=>{if(!/city|town|village|military|fort|industry/.test(p.k))return;const d=dist(pos,[p.x,p.y]);if(d<bd){bd=d;best=p}});return best}
 
 /* --- read a sign photo --- */
-async function readSign(file){
-  openSheet("Reading sign…",`<p class="note">Looking at your photo. This takes a few seconds.</p>`);
+async function readSign(file,isCrop){
+  if(!isCrop)S.lastPhoto=file;window.__origPic=file;window.__cropMode=!!isCrop;
+  openSheet("Reading sign…",`<p class="note">Looking at your photo. This takes a few seconds, sometimes up to half a minute for a blurry one.</p>`);
   diag("Reading the sign…");
   let text="",cands=[],failed=false;
   if(S.sample){try{
@@ -1592,11 +1637,12 @@ function signSheet(text,cands,failed){
   const msg=failed==="blocked"?"The camera didn't open. Tap Take another photo to try again, type what the sign says below, or open this map in Chrome."
     :!S.sample?"Type what the road sign says. It fills in as you type."
     :failed?"Couldn't read that photo. Try again, or type what the sign says."
-    :!cands.length?"No town name found on that sign. Get closer so the sign fills more of the photo, or type it below.":"Pick the one you're at.";
+    :!cands.length?"No town name found yet. Tap Mark the sign and drag a box around it, or get closer so the sign fills more of the photo, or type it below.":"Pick the one you're at.";
   openSheet("Road sign",`
     ${text?`<div class="meta">SIGN SAYS</div><div style="font:600 18px var(--body)">${esc(text)}</div>`:""}
     <p class="note">${msg}</p>
     <div class="list" id="sgC">${signRows(cands)}</div>
+    ${S.sample&&S.lastPhoto&&!failed?`<button class="btn${cands.length?"":" pri"}" id="sgMark">✂ Mark the sign on the photo</button>`:""}
     <label class="f">Type the sign<input type="text" id="sgT" placeholder="e.g. Varzaneh" autocomplete="off"></label>
     <div class="list" id="sgM"></div>
     ${S.sample&&!S.camBlocked?`<div class="row">${camBtn("sgAgain",false,"Take another photo","grow")+camBtn("sgPick",true,"Add picture","grow")}</div>`:""}`,
@@ -1608,8 +1654,37 @@ function signSheet(text,cands,failed){
     act(el.querySelector("#sgC"),()=>cands,!!text);act(el.querySelector("#sgM"),()=>typed);
     el.querySelector("#sgT").oninput=e=>{typed=matchName(e.target.value).map(o=>({p:o.p,kind:"entering"}));el.querySelector("#sgM").innerHTML=signRows(typed)};
     wireCams(el);
+    const mk=el.querySelector("#sgMark");if(mk)mk.onclick=markSheet;
   });
 }
+/* drag a box around the sign on the photo, then read just that part */
+async function markSheet(){
+  const file=S.lastPhoto;if(!file)return;let im;try{im=await loadPic(file)}catch{toast("Couldn't open the photo again");return}
+  const IW=im.width||im.naturalWidth,IH=im.height||im.naturalHeight;
+  openSheet("Mark the sign",`<p class="note" style="margin:0">Drag a box around the sign with your finger. Pinch-zoom isn't needed: a rough box is fine.</p>
+    <div style="position:relative;touch-action:none"><canvas id="mkC" style="width:100%;border-radius:10px;display:block;touch-action:none"></canvas></div>
+    <div class="row"><button class="btn pri grow" id="mkGo" disabled>Read this part</button><button class="btn" id="mkZoom" disabled>Zoom in</button><button class="btn" id="mkBack">Back</button></div>`,
+  el=>{
+    const cv=el.querySelector("#mkC"),g=cv.getContext("2d");let view={x:0,y:0,w:IW,h:IH},box=null,drag=null;
+    const fit=()=>{const cw=cv.clientWidth||340,ch=Math.min(window.innerHeight*.5,cw*view.h/view.w);cv.width=Math.round(cw*devicePixelRatio);cv.height=Math.round(ch*devicePixelRatio);cv.style.height=ch+"px";draw()};
+    const draw=()=>{g.drawImage(im,view.x,view.y,view.w,view.h,0,0,cv.width,cv.height);
+      if(box){const[x0,y0,x1,y1]=box.map((v,i)=>i%2?(v-view.y)/view.h*cv.height:(v-view.x)/view.w*cv.width);
+        g.fillStyle="rgba(0,0,0,.45)";g.fillRect(0,0,cv.width,Math.min(y0,y1));g.fillRect(0,Math.max(y0,y1),cv.width,cv.height);g.fillRect(0,Math.min(y0,y1),Math.min(x0,x1),Math.abs(y1-y0));g.fillRect(Math.max(x0,x1),Math.min(y0,y1),cv.width,Math.abs(y1-y0));
+        g.strokeStyle="#3fb8a8";g.lineWidth=3*devicePixelRatio;g.strokeRect(Math.min(x0,x1),Math.min(y0,y1),Math.abs(x1-x0),Math.abs(y1-y0))}};
+    const toImg=e=>{const r=cv.getBoundingClientRect();return[view.x+(e.clientX-r.left)/r.width*view.w,view.y+(e.clientY-r.top)/r.height*view.h]};
+    cv.onpointerdown=e=>{cv.setPointerCapture(e.pointerId);drag=toImg(e);box=[...drag,...drag];draw()};
+    cv.onpointermove=e=>{if(!drag)return;const p=toImg(e);box=[drag[0],drag[1],p[0],p[1]];draw()};
+    cv.onpointerup=()=>{drag=null;if(box){const[x0,y0,x1,y1]=box;const ok=Math.abs(x1-x0)>IW*.01&&Math.abs(y1-y0)>IH*.01;el.querySelector("#mkGo").disabled=!ok;el.querySelector("#mkZoom").disabled=!ok;if(!ok)box=null;draw()}};
+    el.querySelector("#mkZoom").onclick=()=>{if(!box)return;const[x0,y0,x1,y1]=box,bw=Math.abs(x1-x0),bh=Math.abs(y1-y0),cx=(x0+x1)/2,cy=(y0+y1)/2;
+      let w2=Math.max(bw*1.6,IW*.06),h2=w2*view.h/view.w;if(h2<bh*1.6){h2=bh*1.6;w2=h2*view.w/view.h}
+      view={x:Math.max(0,Math.min(IW-w2,cx-w2/2)),y:Math.max(0,Math.min(IH-h2,cy-h2/2)),w:Math.min(w2,IW),h:Math.min(h2,IH)};box=null;el.querySelector("#mkGo").disabled=true;el.querySelector("#mkZoom").disabled=true;fit();toast("Now drag a tighter box")};
+    el.querySelector("#mkBack").onclick=()=>signSheet(S.lastSign?S.lastSign.text:"",S.lastSign?S.lastSign.cands:[],false);
+    el.querySelector("#mkGo").onclick=async()=>{const[x0,y0,x1,y1]=box,sx=Math.max(0,Math.min(x0,x1)),sy=Math.max(0,Math.min(y0,y1)),sw=Math.min(IW-sx,Math.abs(x1-x0)),sh=Math.min(IH-sy,Math.abs(y1-y0));
+      const sc=Math.min(4,Math.max(1,1600/sw)),c=document.createElement("canvas");c.width=Math.round(sw*sc);c.height=Math.round(sh*sc);const o=c.getContext("2d");o.imageSmoothingQuality="high";o.drawImage(im,sx,sy,sw,sh,0,0,c.width,c.height);
+      const blob=await new Promise(r=>c.toBlob(r,"image/png"));if(!blob){toast("Couldn't cut that part out");return}
+      diagOpen();diag("Reading the part you marked…");readSign(blob,true)};
+    requestAnimationFrame(fit);
+  })}
 
 /* --- the GPS sheet: where are you, where to --- */
 function gpsSheet(found){
@@ -1694,7 +1769,7 @@ async function goDest(q){
 let RG=null,RN=0,RC=20;
 function loadRoads(url){const im=new Image();im.onload=()=>{try{const c=document.createElement("canvas");c.width=im.width;c.height=im.height;const g=c.getContext("2d");g.drawImage(im,0,0);
   const d=g.getImageData(0,0,im.width,im.height).data;RN=im.width;RC=WORLD/RN;RG=new Uint8Array(RN*RN);for(let i=0;i<RN*RN;i++)RG[i]=d[i*4]>127?1:0;
-  if(S.nav&&S.myPos){S.route=findRoute(S.myPos,[S.nav.x,S.nav.y]);S.step=0;updateNav();dirty()}}catch{}};im.src=url}
+  if(S.nav&&S.myPos){S.route=findRoute(S.myPos,[S.nav.x,S.nav.y]);S.step=S.route?Math.max(0,Math.min(S.route.steps.length-1,+ls.get("navStep",0)||0)):0;updateNav();dirty()}}catch{}};im.src=url}
 function findRoute(a,b){
   if(!RG)return null;const N=RN,cl=v=>Math.max(0,Math.min(N-1,Math.floor(v/RC)));
   const s=cl(a[1])*N+cl(a[0]),t=cl(b[1])*N+cl(b[0]);if(s===t)return null;
@@ -1781,7 +1856,7 @@ function fromSheet(){
   });
 }
 function stopNav(){S.nav=null;S.route=null;ls.set("nav",null);updateNav();dirty()}
-function updateNav(){
+function updateNav(){if(S.route)ls.set("navStep",S.step);
   if(!S.nav){navEl.hidden=true;return}
   const me=S.myPos,t=[S.nav.x,S.nav.y];let html,ctrls="";
   if(!me)html=`<span>Going to <b>${esc(S.nav.name)}</b></span><span class="meta">Tap here to set where you're starting</span>`;
@@ -1953,7 +2028,7 @@ resize();
 setTimeout(()=>{buildTerrain();dirty()},0);
 requestAnimationFrame(loop);
 applyLang();
-window.__nfm={S,pinSheet,gInfo,centerOn,dirty};
+window.__nfm={S,pinSheet,gInfo,centerOn,dirty,readSign,markSheet,setMyPos,startNav};
 if(DOOR&&S.callsign)DOOR.setAdminName(S.callsign);
 setTimeout(()=>{if(DOOR&&!["open","admin","member","checking"].includes(DOOR.state()))return;if(!S.callsign)nameSheet(true);else if(S._joined)toast(`Joined group "${S._joined.name}"`)},900);
 updateCoords();
