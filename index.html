@@ -11,19 +11,26 @@ const P="nfm1/"+ROOM+"/";
 const ls={get(k){try{return localStorage.getItem(k)}catch{return null}},set(k,v){try{localStorage.setItem(k,v)}catch{}}};
 let cid=ls.get("nfm:cid");if(!cid){cid="c"+Math.random().toString(36).slice(2,10);ls.set("nfm:cid",cid)}
 
-/* ---- local copy of shared collections (cached so the map works offline) ---- */
-const cols={pins:new Map(),routes:new Map()},subs={pins:[],routes:[]};
+/* ---- local copy of shared collections (cached so the map works offline) ----
+   "pins"/"routes" live in the shared room; "groups/<code>/pins" each get their own private channel. */
+const cols={},subs={},chans=new Set();
 const docSnap=(id,v)=>({id,exists:v!=null,data:()=>v==null?undefined:v,metadata:{fromCache:false,hasPendingWrites:false}});
 const colSnap=m=>{const docs=[...m].map(([id,v])=>docSnap(id,v));return{docs,size:docs.length,empty:!docs.length}};
-const emit=c=>subs[c].forEach(f=>{try{f(colSnap(cols[c]))}catch(e){}});
-const cacheKey=c=>"nfm:cache:"+ROOM+":"+c;
-["pins","routes"].forEach(c=>{try{Object.entries(JSON.parse(ls.get(cacheKey(c))||"{}")).forEach(([k,v])=>cols[c].set(k,v))}catch{}});
-const save=c=>ls.set(cacheKey(c),JSON.stringify(Object.fromEntries(cols[c])));
+const okCode=c=>/^[a-z0-9]{4,24}$/.test(c);
+function topicFor(name){if(name==="pins")return P+"pin/";if(name==="routes")return P+"route/";
+  const m=name.match(/^groups\/([a-z0-9]{4,24})\/pins$/);return m?"nfm1g/"+m[1]+"/pin/":null}
+const cacheKey=c=>"nfm:cache:"+(c==="pins"||c==="routes"?ROOM+":"+c:c);
+function col(c){if(!cols[c]){cols[c]=new Map();subs[c]=[];try{Object.entries(JSON.parse(ls.get(cacheKey(c))||"{}")).forEach(([k,v])=>cols[c].set(k,v))}catch{}}return cols[c]}
+const emit=c=>(subs[c]||[]).forEach(f=>{try{f(colSnap(col(c)))}catch(e){}});
+const save=c=>ls.set(cacheKey(c),JSON.stringify(Object.fromEntries(col(c))));
+col("pins");col("routes");
 
 /* ---- relay connection ---- */
 let client=null,connected=false;const queue=[];
-function send(t,obj,retain){const msg=obj==null?"":JSON.stringify(obj);
-  if(client&&connected)client.publish(P+t,msg,{qos:1,retain:!!retain});else{queue.push([t,msg,!!retain]);if(queue.length>200)queue.shift()}}
+function sendT(topic,obj,retain){const msg=obj==null?"":JSON.stringify(obj);
+  if(client&&connected)client.publish(topic,msg,{qos:1,retain:!!retain});else{queue.push([topic,msg,!!retain]);if(queue.length>300)queue.shift()}}
+const send=(t,obj,retain)=>sendT(P+t,obj,retain);
+function joinChan(code){if(!okCode(code))return;chans.add(code);if(client&&connected)client.subscribe("nfm1g/"+code+"/#",{qos:1})}
 function status(on){const el=document.getElementById("status");if(!el)return;
   if(!on){el.textContent=window.mqtt?"Reconnecting to live map…":"Offline · pins save on this phone";el.className="chip bad"}}
 function connect(i){
@@ -31,16 +38,21 @@ function connect(i){
   const url=BROKERS[i%BROKERS.length];let ok=false;
   try{client=mqtt.connect(url,{clientId:"nfm_"+cid+"_"+Math.random().toString(36).slice(2,6),clean:true,keepalive:30,reconnectPeriod:4000,connectTimeout:8000,
     will:{topic:P+"peer/"+cid,payload:"",retain:true,qos:0}})}catch(e){setTimeout(()=>connect(i+1),1000);return}
-  client.on("connect",()=>{ok=connected=true;client.subscribe(P+"#",{qos:1});
-    while(queue.length){const[t,m,r]=queue.shift();client.publish(P+t,m,{qos:1,retain:r})}
+  client.on("connect",()=>{ok=connected=true;client.subscribe(P+"#",{qos:1});chans.forEach(c=>client.subscribe("nfm1g/"+c+"/#",{qos:1}));
+    while(queue.length){const[t,m,r]=queue.shift();client.publish(t,m,{qos:1,retain:r})}
     pubPres();firePeers()});
   client.on("close",()=>{if(connected){connected=false;status(false)}});
   client.on("error",()=>{});
   client.on("message",(topic,buf)=>{
-    const t=topic.slice(P.length),s=buf.toString();let v=null;if(s){try{v=JSON.parse(s)}catch{return}}
+    const s=buf.toString();let v=null;if(s){try{v=JSON.parse(s)}catch{return}}
+    const put=(c,id)=>{if(!id||id.length>64)return;if(v&&typeof v==="object"&&!Array.isArray(v))col(c).set(id,v);else col(c).delete(id);save(c);emit(c)};
+    if(topic.startsWith("nfm1g/")){const m=topic.match(/^nfm1g\/([a-z0-9]{4,24})\/pin\/(.+)$/);if(m&&chans.has(m[1])){put("groups/"+m[1]+"/pins",m[2]);return}
+      const e=topic.match(/^nfm1g\/([a-z0-9]{4,24})\/ev\/([a-z]{1,20})$/);if(e&&chans.has(e[1])&&v&&typeof v==="object"){const me=v.c===cid;
+        (evCbs[e[2]]||[]).forEach(f=>{try{f({topic:e[2],data:v.d,peer:String(v.c),by:String(v.c),isMe:me,sameTab:me,kind:"viewer",guest:false})}catch{}})}return}
+    if(!topic.startsWith(P))return;
+    const t=topic.slice(P.length);
     const k=t.indexOf("/");if(k<0)return;const kind=t.slice(0,k),id=t.slice(k+1);if(!id||id.length>64)return;
-    if(kind==="pin"||kind==="route"){const c=kind==="pin"?"pins":"routes";
-      if(v&&typeof v==="object"&&!Array.isArray(v))cols[c].set(id,v);else cols[c].delete(id);save(c);emit(c)}
+    if(kind==="pin")put("pins",id);else if(kind==="route")put("routes",id);
     else if(kind==="peer"){if(id===cid)return;if(v&&typeof v==="object")peers.set(id,v);else peers.delete(id);firePeers()}
     else if(kind==="ev"&&v&&typeof v==="object"){const me=v.c===cid;
       (evCbs[id]||[]).forEach(f=>{try{f({topic:id,data:v.d,peer:String(v.c),by:String(v.c),isMe:me,sameTab:me,kind:"viewer",guest:false})}catch{}})}
@@ -61,21 +73,25 @@ setInterval(()=>{if(connected)pubPres();firePeers()},45000);
 const STATIC=()=>({"settings/map":{url:window.__MAP},"settings/roads":{url:window.__ROADS}});
 const colRef=name=>{
   if(name==="detail")return{onSnapshot(f){setTimeout(()=>f(colSnap(new Map((window.__DETAIL||[]).map(d=>[d.id,d])))),0);return()=>{}}};
-  const c=name==="routes"?"routes":"pins",topic=c==="pins"?"pin/":"route/";
-  const put=(id,data)=>{cols[c].set(id,data);save(c);emit(c);send(topic+id,data,true)};
+  const base=topicFor(name);if(!base)throw new TypeError("unknown collection "+name);
+  const gm=name.match(/^groups\/([a-z0-9]{4,24})\/pins$/);if(gm)joinChan(gm[1]);
+  const c=name,m=col(c);
+  const put=(id,data)=>{m.set(id,data);save(c);emit(c);sendT(base+id,data,true)};
   return{
-    onSnapshot(f){subs[c].push(f);setTimeout(()=>f(colSnap(cols[c])),0);return()=>{const i=subs[c].indexOf(f);if(i>=0)subs[c].splice(i,1)}},
-    async add(data){const id=(c==="pins"?"p":"r")+Date.now().toString(36)+Math.random().toString(36).slice(2,6);put(id,data);return{id}},
-    doc(id){return{async set(data){put(id,data)},async update(data){put(id,{...(cols[c].get(id)||{}),...data})},
-      async delete(){cols[c].delete(id);save(c);emit(c);send(topic+id,null,true)},
-      onSnapshot(f){f(docSnap(id,cols[c].get(id)));return()=>{}}}}};
+    onSnapshot(f){subs[c].push(f);setTimeout(()=>f(colSnap(m)),0);return()=>{const i=subs[c].indexOf(f);if(i>=0)subs[c].splice(i,1)}},
+    async add(data){const id=(c==="routes"?"r":"p")+Date.now().toString(36)+Math.random().toString(36).slice(2,6);put(id,data);return{id}},
+    doc(id){return{async set(data){put(id,data)},async update(data){put(id,{...(m.get(id)||{}),...data})},
+      async delete(){m.delete(id);save(c);emit(c);sendT(base+id,null,true)},
+      onSnapshot(f){f(docSnap(id,m.get(id)));return()=>{}}}}};
 };
 const db={collection:colRef,doc(path){return{onSnapshot(f){setTimeout(()=>f(docSnap(path,STATIC()[path]||null)),0);return()=>{}},async set(){},async get(){return docSnap(path,STATIC()[path]||null)}}}};
 const room={
   presence(patch){Object.entries(patch||{}).forEach(([k,v])=>{if(v===null)delete myPres[k];else myPres[k]=v});schedPres();firePeers();return Promise.resolve()},
   onPeers(f){peerCbs.push(f);setTimeout(()=>f({peers:peerList()}),0);return()=>{}},
   peers:()=>peerList(),
-  emit(topic,data){send("ev/"+topic,{c:cid,d:data},false);return Promise.resolve()},
+  emit(topic,data){const g=data&&data.g;
+    if(g&&g!=="map"&&okCode(g)){joinChan(g);sendT("nfm1g/"+g+"/ev/"+topic,{c:cid,d:data},false)}  // group-only: its own private channel
+    else send("ev/"+topic,{c:cid,d:data},false);return Promise.resolve()},
   on(topic,f){(evCbs[topic]=evCbs[topic]||[]).push(f);return()=>{}}
 };
 const user={me:async()=>({id:cid,name:"",avatarUrl:"",color:"",email:null,isOwner:true,canEdit:true}),id:async()=>cid,
@@ -235,6 +251,16 @@ textarea{min-height:64px;resize:vertical}
 #diag{position:fixed;left:max(12px,env(safe-area-inset-left,0px));right:max(12px,env(safe-area-inset-right,0px));top:calc(env(safe-area-inset-top,0px) + 62px);z-index:40;background:rgba(20,16,12,.96);border:1px solid var(--gold);border-radius:12px;padding:8px 10px 10px;box-shadow:0 8px 24px rgba(0,0,0,.5);display:flex;flex-direction:column;gap:6px}
 #diag .dh{display:flex;align-items:center;justify-content:space-between;color:var(--gold);font:700 14px var(--display);letter-spacing:.08em;text-transform:uppercase}
 #diag .dl{font:500 12px/1.45 var(--mono);color:var(--fg);max-height:34vh;overflow:auto;white-space:pre-wrap;word-break:break-word;user-select:text;-webkit-user-select:text}
+.gchips{display:flex;flex-wrap:wrap;gap:6px}
+.gchips button{display:inline-flex;align-items:center;gap:7px;height:36px;padding:0 12px 0 5px;border-radius:18px;border:1px solid var(--line);background:var(--panel2);color:var(--fg);font:600 13px var(--body);cursor:pointer}
+.gchips button[aria-pressed="true"]{border-color:var(--accent);box-shadow:inset 0 0 0 1px var(--accent)}
+.gdot{width:24px;height:24px;border-radius:50%;display:inline-grid;place-items:center;font:700 12px var(--body);color:#1b1610;flex:none}
+.grow2{display:flex;gap:6px;align-items:center;min-width:0}
+.soon{display:flex;flex-wrap:wrap;gap:6px}.soon span{font-size:12px;padding:5px 9px;border-radius:12px;border:1px dashed var(--line);color:var(--muted)}
+.dot.me{cursor:pointer;box-shadow:0 0 0 2px var(--fg)}
+#bBell{position:relative}#bBell.alert{color:var(--warn);border-color:var(--warn)}
+.bdot{position:absolute;top:5px;right:6px;width:9px;height:9px;border-radius:50%;background:var(--warn);box-shadow:0 0 0 2px var(--panel)}
+#diag .dl .bad{color:#ff9a86}
 .kbd{font-family:var(--mono);background:var(--bg);padding:1px 5px;border-radius:5px}
 #coords{display:inline-flex;gap:5px;align-items:center;align-self:flex-start;margin:0;padding:4px 5px 4px 10px}
 #coords input{width:4.2ch;padding:2px 3px;border:0;border-bottom:1.5px dashed var(--accent);border-radius:0;background:transparent;color:var(--accent);font:500 16px var(--mono);text-align:center}
@@ -247,6 +273,7 @@ textarea{min-height:64px;resize:vertical}
     <h1>Tenderloin <small>Nasdara</small></h1>
     <div class="hsp"></div>
     <div id="online" aria-label="Who is online"></div>
+    <button class="ibtn" id="bBell" aria-label="Camera check log" hidden><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M6 8a6 6 0 1 1 12 0c0 7 3 8 3 8H3s3-1 3-8"/><path d="M10.3 21a1.9 1.9 0 0 0 3.4 0"/></svg><span class="bdot" hidden></span></button>
     <button class="ibtn" id="bSearch" aria-label="Search pins">
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/></svg>
     </button>
@@ -308,6 +335,10 @@ const TYPES = [
   {k:"enemy",  n:"Enemy",      c:"#e2563d", g:"!"},
   {k:"zombies",n:"Infected",   c:"#b05ad0", g:"Z"},
   {k:"heli",   n:"Heli crash", c:"#ff8a3d", g:"H"},
+  {k:"hunt",   n:"Hunting",    c:"#8a6a3a", g:"Hu"},
+  {k:"garage", n:"Garage",     c:"#9aa3ad", g:"G"},
+  {k:"loot",   n:"Loot",       c:"#d7b45a", g:"L"},
+  {k:"danger", n:"Danger",     c:"#ff5a5a", g:"⚠"},
   {k:"note",   n:"Note",       c:"#d9cdb4", g:"?"},
 ];
 const T = Object.fromEntries(TYPES.map(t=>[t.k,t]));
@@ -324,7 +355,7 @@ const ls = {
 const S = {
   mode:"pan",
   pins:new Map(), routes:new Map(),
-  hidden:new Set(ls.get("hidden",[])),
+  hidden:new Set(ls.get("hidden",[])),hideK:new Set(ls.get("hideK",[])),hideG:new Set(ls.get("hideG",[])),
   labels:ls.get("labels",true), grid:ls.get("grid",true), examples:ls.get("examples",true),
   ruler:[], draft:[],
   pings:[], peers:[],
@@ -571,6 +602,7 @@ function draw(now){
   if(S.examples&&S.labels){
     ctx.textAlign="center";ctx.textBaseline="middle";
     PLACES.forEach(p=>{
+      if(S.hideK.has(p.k))return;
       if(V.s<(p.sz>=14?0:p.sz>=10?.034:.06))return;const[sx,sy]=toS(p.x,p.y);if(sx<-80||sy<-30||sx>W+80||sy>H+30)return;const k=PK[p.k];
       ctx.beginPath();
       if(p.k==="city"||p.k==="fort"||p.k==="military"||p.k==="industry"){const r=p.k==="city"?5:4.5;ctx.rect(sx-r,sy-r,r*2,r*2)}
@@ -592,14 +624,16 @@ function draw(now){
     pts.forEach(([x,y])=>{const[sx,sy]=toS(x,y);ctx.beginPath();ctx.arc(sx,sy,6,0,7);ctx.fillStyle="#fff";ctx.fill();ctx.lineWidth=2;ctx.strokeStyle="#1b1610";ctx.stroke()});
   }
   // pins
-  for(const p of S.pins.values()){ if(S.hidden.has(p.type))continue; drawPin(p) }
+  for(const p of S.pins.values()){ if(S.hidden.has(p.type)||S.hideG.has(p.g))continue; drawPin(p) }
   // players
   const t=now/1000;
   S.peers.forEach(pr=>{const pos=pr.presence&&pr.presence.pos;if(!Array.isArray(pos))return;const[sx,sy]=toS(pos[0],pos[1]);const col=safeColor(pr.presence.color);
     ctx.beginPath();ctx.arc(sx,sy,14+Math.sin(t*3)*2,0,7);ctx.fillStyle=col+"40";ctx.fill();
     ctx.beginPath();ctx.arc(sx,sy,8,0,7);ctx.fillStyle=col;ctx.fill();ctx.lineWidth=2.5;ctx.strokeStyle="#fff";ctx.stroke();
-    label(`${pr.isMe?"You":String(pr.presence.name||"Friend").slice(0,16)}`,sx,sy+22,"#fff");});
-  if(!S.room&&S.myPos){const[sx,sy]=toS(...S.myPos);ctx.beginPath();ctx.arc(sx,sy,8,0,7);ctx.fillStyle=S.color;ctx.fill();ctx.lineWidth=2.5;ctx.strokeStyle="#fff";ctx.stroke();label("You",sx,sy+22,"#fff")}
+    label(String(pr.isMe?(S.callsign||"You"):(pr.presence.name||"Friend")).slice(0,16),sx,sy+22,"#fff");
+    const sn=pr.presence.seen;if(sn&&typeof sn==="object"&&sn.place&&isFinite(sn.at)){const mins=Math.max(0,Math.round((Date.now()-sn.at)/60000));
+      label(`📍 ${String(sn.place).slice(0,22)} · ${mins<1?"just now":mins+"m ago"}`,sx,sy+37,"#e6b24f")}});
+  if(!S.room&&S.myPos){const[sx,sy]=toS(...S.myPos);ctx.beginPath();ctx.arc(sx,sy,8,0,7);ctx.fillStyle=S.color;ctx.fill();ctx.lineWidth=2.5;ctx.strokeStyle="#fff";ctx.stroke();label(String(S.callsign||"You").slice(0,16),sx,sy+22,"#fff")}
   // go-to-coordinates marker
   if(S.mark){const age=now-S.mark.t;if(age>12000)S.mark=null;else{const[mx,my]=toS(S.mark.x,S.mark.y),ph=(age/1000)%1;
     ctx.beginPath();ctx.arc(mx,my,8+ph*30,0,7);ctx.strokeStyle="#e6b24f";ctx.globalAlpha=1-ph;ctx.lineWidth=3;ctx.stroke();ctx.globalAlpha=1;
@@ -609,26 +643,69 @@ function draw(now){
     ctx.beginPath();ctx.arc(tx,ty,12,0,7);ctx.strokeStyle="#e6b24f";ctx.lineWidth=3;ctx.stroke();ctx.beginPath();ctx.arc(tx,ty,4,0,7);ctx.fillStyle="#e6b24f";ctx.fill()}
   // pings
   let anim=!!S._mk||S.peers.some(p=>p.presence&&p.presence.pos);S._mk=false;
-  S.pings=S.pings.filter(pg=>now-pg.at<6000);
-  S.pings.forEach(pg=>{const age=(now-pg.at)/1000;const[sx,sy]=toS(pg.x,pg.y);const col=pg.kind==="danger"?"#e2563d":"#3fb8a8";
+  S.pings=S.pings.filter(pg=>now-pg.at<(pg.kind==="sign"?15000:6000));
+  S.pings.forEach(pg=>{const age=(now-pg.at)/1000;const[sx,sy]=toS(pg.x,pg.y);const col=pg.kind==="danger"?"#e2563d":pg.kind==="sign"?"#e6b24f":"#3fb8a8";
     for(let k=0;k<3;k++){const ph=(age*1.2+k/3)%1;ctx.beginPath();ctx.arc(sx,sy,10+ph*60,0,7);ctx.strokeStyle=col;ctx.globalAlpha=(1-ph)*(1-age/6);ctx.lineWidth=3;ctx.stroke()}
     ctx.globalAlpha=1;ctx.beginPath();ctx.arc(sx,sy,7,0,7);ctx.fillStyle=col;ctx.fill();
-    label((pg.kind==="danger"?"⚠ ":"")+String(pg.name||"Ping").slice(0,16),sx,sy-22,"#fff");anim=true;});
+    label(pg.kind==="sign"?`📍 ${String(pg.name||"").slice(0,16)} · ${String(pg.place||"").slice(0,24)}`:(pg.kind==="danger"?"⚠ ":"")+String(pg.name||"Ping").slice(0,16),sx,sy-22,"#fff");anim=true;});
   return anim;
 }
-function label(txt,x,y,col){ctx.font="600 12px 'Barlow',sans-serif";ctx.textAlign="center";ctx.textBaseline="middle";ctx.lineWidth=3.5;ctx.strokeStyle="rgba(20,16,12,.85)";ctx.strokeText(txt,x,y);ctx.fillStyle=col;ctx.fillText(txt,x,y)}
+function label(txt,x,y,col){txt=tr(txt);ctx.font="600 12px 'Barlow',sans-serif";ctx.textAlign="center";ctx.textBaseline="middle";ctx.lineWidth=3.5;ctx.strokeStyle="rgba(20,16,12,.85)";ctx.strokeText(txt,x,y);ctx.fillStyle=col;ctx.fillText(txt,x,y)}
 function drawRoute(pts,col,name,draft){
   line(pts,6,"rgba(20,16,12,.5)");line(pts,3,col,draft?[8,6]:[]);
   pts.forEach(([x,y],i)=>{const[sx,sy]=toS(x,y);ctx.beginPath();ctx.arc(sx,sy,i===0||i===pts.length-1?6:4,0,7);ctx.fillStyle=col;ctx.fill();ctx.strokeStyle="#1b1610";ctx.lineWidth=1.5;ctx.stroke()});
   if(S.labels&&pts.length){const[sx,sy]=toS(...pts[pts.length-1]);label(`${name} · ${fmtDist(pathLen(pts))}`,sx,sy-16,"#fff")}
 }
-function drawPin(p){
-  const t=T[p.type]||T.note,[sx,sy]=toS(p.x,p.y);
-  ctx.beginPath();ctx.moveTo(sx,sy);ctx.bezierCurveTo(sx-11,sy-14,sx-12,sy-30,sx,sy-31);ctx.bezierCurveTo(sx+12,sy-30,sx+11,sy-14,sx,sy);
-  ctx.fillStyle=t.c;ctx.fill();ctx.lineWidth=2;ctx.strokeStyle="#1b1610";ctx.stroke();
-  ctx.fillStyle="#1b1610";ctx.font="700 12px 'Barlow',sans-serif";ctx.textAlign="center";ctx.textBaseline="middle";ctx.fillText(t.g,sx,sy-20);
-  if(S.labels&&p.label&&V.s>.03) label(String(p.label).slice(0,28),sx,sy+10,"#fff");
+/* white vector icon per pin type, drawn in a 20x20 box centred on (x,y) */
+function pinIcon(type,x,y,sz){const k=sz/20;ctx.save();ctx.translate(x,y);ctx.scale(k,k);ctx.fillStyle="#fff";ctx.strokeStyle="#fff";ctx.lineWidth=2;ctx.lineCap="round";ctx.lineJoin="round";
+  const P=()=>ctx.beginPath(),F=()=>ctx.fill(),S2=()=>ctx.stroke();
+  switch(type){
+    case"base":P();ctx.moveTo(-8,0);ctx.lineTo(0,-8);ctx.lineTo(8,0);ctx.lineTo(6,0);ctx.lineTo(6,7);ctx.lineTo(-6,7);ctx.lineTo(-6,0);ctx.closePath();F();ctx.fillStyle="rgba(0,0,0,.45)";ctx.fillRect(-2,2,4,5);break;
+    case"stash":P();ctx.rect(-7,-5,14,11);F();ctx.strokeStyle="rgba(0,0,0,.45)";ctx.lineWidth=1.6;P();ctx.moveTo(-7,-1);ctx.lineTo(7,-1);ctx.moveTo(0,-5);ctx.lineTo(0,6);S2();break;
+    case"vehicle":P();ctx.moveTo(-8,3);ctx.lineTo(-8,-1);ctx.lineTo(-5,-6);ctx.lineTo(5,-6);ctx.lineTo(8,-1);ctx.lineTo(8,3);ctx.closePath();F();ctx.fillStyle="rgba(0,0,0,.5)";P();ctx.arc(-4.5,4,2.4,0,7);ctx.arc(4.5,4,2.4,0,7);F();ctx.fillRect(-4,-4.5,8,3);break;
+    case"water":P();ctx.moveTo(0,-8);ctx.bezierCurveTo(5,-2,7,1,7,3);ctx.arc(0,3,7,0,Math.PI);ctx.bezierCurveTo(-7,1,-5,-2,0,-8);F();break;
+    case"food":P();ctx.arc(0,2,6.5,0,7);F();ctx.fillRect(-1,-8,2,5);P();ctx.ellipse(3,-6,3,1.6,-.5,0,7);F();break;
+    case"medical":ctx.fillRect(-2.5,-8,5,16);ctx.fillRect(-8,-2.5,16,5);break;
+    case"police":P();ctx.moveTo(0,-8);ctx.lineTo(7,-5);ctx.lineTo(6,3);ctx.lineTo(0,8);ctx.lineTo(-6,3);ctx.lineTo(-7,-5);ctx.closePath();F();ctx.fillStyle="rgba(0,0,0,.45)";star(0,0,4.2,1.8);break;
+    case"fire":P();ctx.moveTo(0,-9);ctx.bezierCurveTo(6,-3,7,2,5,5);ctx.bezierCurveTo(3,9,-3,9,-5,5);ctx.bezierCurveTo(-7,1,-4,-2,-2,-5);ctx.bezierCurveTo(-1,-2,1,-2,0,-9);F();break;
+    case"military":star(0,0,8.5,3.6);break;
+    case"tools":ctx.lineWidth=3;P();ctx.moveTo(-6,6);ctx.lineTo(3,-3);S2();P();ctx.arc(4.5,-4.5,3.6,0,7);F();ctx.fillStyle="rgba(0,0,0,.5)";P();ctx.arc(5.5,-5.5,1.5,0,7);F();break;
+    case"enemy":P();ctx.arc(0,-1,7,0,7);F();ctx.fillRect(-4,4,8,4);ctx.fillStyle="rgba(0,0,0,.6)";P();ctx.arc(-2.7,-1,1.9,0,7);ctx.arc(2.7,-1,1.9,0,7);F();break;
+    case"zombies":ctx.font="900 17px 'Saira Condensed',sans-serif";ctx.textAlign="center";ctx.textBaseline="middle";ctx.fillText("Z",0,1);break;
+    case"heli":ctx.lineWidth=2.2;P();ctx.moveTo(-9,-6);ctx.lineTo(9,-6);ctx.moveTo(0,-6);ctx.lineTo(0,-3);ctx.moveTo(3,1);ctx.lineTo(9,1);S2();P();ctx.ellipse(-1,2,5,3.6,0,0,7);F();break;
+    case"hunt":ctx.lineWidth=2;P();ctx.arc(0,0,6,0,7);S2();P();ctx.moveTo(0,-9);ctx.lineTo(0,-3);ctx.moveTo(0,3);ctx.lineTo(0,9);ctx.moveTo(-9,0);ctx.lineTo(-3,0);ctx.moveTo(3,0);ctx.lineTo(9,0);S2();break;
+    case"garage":P();ctx.moveTo(-8,-1);ctx.lineTo(0,-7);ctx.lineTo(8,-1);ctx.lineTo(8,7);ctx.lineTo(-8,7);ctx.closePath();F();ctx.strokeStyle="rgba(0,0,0,.5)";ctx.lineWidth=1.4;P();for(let i=0;i<3;i++){ctx.moveTo(-5,1.5+i*2);ctx.lineTo(5,1.5+i*2)}S2();break;
+    case"loot":P();ctx.moveTo(-7,-2);ctx.lineTo(7,-2);ctx.lineTo(6,7);ctx.lineTo(-6,7);ctx.closePath();F();P();ctx.moveTo(-7,-3);ctx.quadraticCurveTo(0,-11,7,-3);F();ctx.fillStyle="rgba(0,0,0,.45)";ctx.fillRect(-1.5,0,3,3);break;
+    case"danger":P();ctx.moveTo(0,-8);ctx.lineTo(8.5,7);ctx.lineTo(-8.5,7);ctx.closePath();F();ctx.fillStyle="rgba(0,0,0,.6)";ctx.fillRect(-1.2,-2,2.4,5);ctx.fillRect(-1.2,4.2,2.4,1.8);break;
+    default:ctx.font="800 15px 'Barlow',sans-serif";ctx.textAlign="center";ctx.textBaseline="middle";ctx.fillText("?",0,1)}
+  ctx.restore();
+  function star(cx,cy,R,r){P();for(let i=0;i<10;i++){const a=-Math.PI/2+i*Math.PI/5,rr=i%2?r:R;ctx.lineTo(cx+Math.cos(a)*rr,cy+Math.sin(a)*rr)}ctx.closePath();F()}
 }
+function shade(hex,amt){const n=parseInt(hex.slice(1),16);let r=n>>16,g=n>>8&255,b=n&255;r=Math.max(0,Math.min(255,r+amt));g=Math.max(0,Math.min(255,g+amt));b=Math.max(0,Math.min(255,b+amt));return"#"+((1<<24)|(r<<16)|(g<<8)|b).toString(16).slice(1)}
+function pinShape(sx,sy,R){ctx.beginPath();ctx.moveTo(sx,sy);ctx.bezierCurveTo(sx-R*.55,sy-R*.7,sx-R,sy-R*1.15,sx-R,sy-R*1.75);ctx.arc(sx,sy-R*1.75,R,Math.PI,0);ctx.bezierCurveTo(sx+R,sy-R*1.15,sx+R*.55,sy-R*.7,sx,sy);ctx.closePath()}
+function rrect(x,y,w,h,r){ctx.beginPath();if(ctx.roundRect)ctx.roundRect(x,y,w,h,r);else ctx.rect(x,y,w,h)}
+function drawPin(p){
+  const t=T[p.type]||T.note,[sx,sy]=toS(p.x,p.y),gi=gInfo(p.g),R=11.5,cy=sy-R*1.75;
+  // drop shadow on the ground
+  ctx.fillStyle="rgba(0,0,0,.35)";ctx.beginPath();ctx.ellipse(sx,sy+1,6,2.4,0,0,7);ctx.fill();
+  // body: type colour with a soft gradient, group-coloured rim
+  pinShape(sx,sy,R);const gr=ctx.createLinearGradient(sx-R,cy-R,sx+R,sy);gr.addColorStop(0,shade(t.c,40));gr.addColorStop(1,shade(t.c,-45));
+  ctx.fillStyle=gr;ctx.fill();ctx.lineWidth=3;ctx.strokeStyle=gi.color;ctx.stroke();ctx.lineWidth=1;ctx.strokeStyle="rgba(10,8,6,.85)";ctx.stroke();
+  // inner disc + icon
+  ctx.beginPath();ctx.arc(sx,cy,R*.72,0,7);ctx.fillStyle="rgba(15,12,9,.42)";ctx.fill();
+  pinIcon(p.type,sx,cy,R*1.25);
+  // highlight
+  ctx.beginPath();ctx.arc(sx-R*.38,cy-R*.42,R*.28,0,7);ctx.fillStyle="rgba(255,255,255,.28)";ctx.fill();
+  if(p.g==="me"){ctx.beginPath();ctx.arc(sx+R*.85,cy-R*.85,5.5,0,7);ctx.fillStyle="#1b1610";ctx.fill();ctx.strokeStyle=gi.color;ctx.lineWidth=1.5;ctx.stroke();
+    ctx.fillStyle="#fff";ctx.fillRect(sx+R*.85-2.6,cy-R*.85-.5,5.2,3.6);ctx.strokeStyle="#fff";ctx.lineWidth=1.2;ctx.beginPath();ctx.arc(sx+R*.85,cy-R*.85-.6,1.8,Math.PI,0);ctx.stroke()}
+  // name tag (iZurvive style): dark pill, group stripe on the right
+  if(S.labels&&p.label&&V.s>.03){const txt=String(p.label).slice(0,28);ctx.font="600 12.5px 'Barlow',sans-serif";const w=ctx.measureText(txt).width+26,h=22,x=sx-w/2,y=cy-R-h-6;
+    rrect(x,y,w,h,7);ctx.fillStyle="rgba(18,15,11,.92)";ctx.fill();ctx.lineWidth=1;ctx.strokeStyle="rgba(255,255,255,.18)";ctx.stroke();
+    ctx.save();rrect(x,y,w,h,7);ctx.clip();ctx.fillStyle=gi.color;ctx.fillRect(x+w-5,y,5,h);ctx.restore();
+    ctx.fillStyle=t.c;ctx.beginPath();ctx.arc(x+10,y+h/2,4,0,7);ctx.fill();
+    ctx.fillStyle="#fff";ctx.textAlign="left";ctx.textBaseline="middle";ctx.fillText(txt,x+18,y+h/2+1)}
+}
+
 function loop(now){ if(needs||S.anim){ needs=false; S.anim=draw(now) } requestAnimationFrame(loop) }
 
 /* ---------- math & format ---------- */
@@ -696,7 +773,7 @@ function coordsSheet(){
 })();
 
 /* ---------- toast & sheet ---------- */
-let toastT;function toast(m){const el=document.getElementById("toast");el.textContent=m;el.hidden=false;clearTimeout(toastT);toastT=setTimeout(()=>el.hidden=true,2400)}
+let toastT;function toast(m){m=tr(m);const el=document.getElementById("toast");el.textContent=m;el.hidden=false;clearTimeout(toastT);toastT=setTimeout(()=>el.hidden=true,2400)}
 const sheet=document.getElementById("sheet"),shBody=document.getElementById("shBody");
 function openSheet(title,html,bind){document.getElementById("shTitle").textContent=title;shBody.innerHTML=html;sheet.classList.add("open");bind&&bind(shBody)}
 function closeSheet(){sheet.classList.remove("open")}
@@ -755,8 +832,8 @@ document.getElementById("zin").onclick=()=>{zoomAt(1.6,W/2,H/2);updateCoords()};
 document.getElementById("zout").onclick=()=>{zoomAt(1/1.6,W/2,H/2);updateCoords()};
 document.getElementById("zfit").onclick=()=>{fit();updateCoords()};
 
-function hitPin(sx,sy){let best=null,bd=26;for(const p of S.pins.values()){if(S.hidden.has(p.type))continue;const[px,py]=toS(p.x,p.y);const d=Math.hypot(px-sx,py-18-sy);if(d<bd){bd=d;best=p}}return best}
-function hitPlace(sx,sy){if(!S.examples||!S.labels)return null;let best=null,bd=28;PLACES.forEach(p=>{if(V.s<(p.sz>=14?0:p.sz>=10?.034:.06))return;const[px,py]=toS(p.x,p.y);const d=Math.min(Math.hypot(px-sx,py-sy),Math.hypot(px-sx,py-13-sy));if(d<bd){bd=d;best=p}});return best}
+function hitPin(sx,sy){let best=null,bd=26;for(const p of S.pins.values()){if(S.hidden.has(p.type)||S.hideG.has(p.g))continue;const[px,py]=toS(p.x,p.y);const d=Math.hypot(px-sx,py-20-sy);if(d<bd){bd=d;best=p}}return best}
+function hitPlace(sx,sy){if(!S.examples||!S.labels)return null;let best=null,bd=28;PLACES.forEach(p=>{if(S.hideK.has(p.k))return;if(V.s<(p.sz>=14?0:p.sz>=10?.034:.06))return;const[px,py]=toS(p.x,p.y);const d=Math.min(Math.hypot(px-sx,py-sy),Math.hypot(px-sx,py-13-sy));if(d<bd){bd=d;best=p}});return best}
 function placeSheet(p){const[a,b]=grid(p.x,p.y);
   openSheet(p.n,`<div class="meta">${PK[p.k].n.toUpperCase()} · GRID ${a} / ${b}</div>
     <div class="row"><button class="btn pri grow" id="plPin">Drop pin here</button><button class="btn grow" id="plCopy">Copy grid</button><button class="btn grow" id="plPing">Ping</button></div>
@@ -801,14 +878,199 @@ function onLong(sx,sy){
 }
 function copy(t){try{navigator.clipboard.writeText(t).then(()=>toast("Copied "+t),()=>toast(t))}catch{toast(t)}}
 
+/* ---------- language: English / Español ----------
+   The page is written in English; in Spanish mode a translator rewrites every
+   visible text, button, placeholder and message as it appears. Place names stay as in the game. */
+const ES_PAIRS=[
+ // long phrases first
+ ["Type the town name from a road sign or your in-game map, and I'll put you on the map.","Escribe el nombre del pueblo de una señal o de tu mapa del juego y te ubico en el mapa."],
+ ["Point your phone at a road sign on your TV and snap it. I'll find you on the map.","Apunta el teléfono a una señal en tu TV y toma la foto. Te encuentro en el mapa."],
+ ["Your friends see this on your pins, pings and your spot on the map.","Tus amigos lo ven en tus marcadores, avisos y tu ubicación en el mapa."],
+ ["Shown to your friends on your pins, pings and position.","Tus amigos lo ven en tus marcadores, avisos y ubicación."],
+ ["Each group has its own private pins. Only people with the group code see them.","Cada grupo tiene sus propios marcadores privados. Solo quien tiene el código los ve."],
+ ["is the open map;","es el mapa abierto;"],["stays on this phone.","se queda en este teléfono."],
+ ["These fill in automatically once DayZ publishes Nasdara's official loot files.","Se llenan solos cuando DayZ publique los archivos oficiales de botín de Nasdara."],
+ ["Looking at your photo. This takes a few seconds.","Revisando tu foto. Toma unos segundos."],
+ ["Couldn't read that photo. Try again, or type what the sign says.","No pude leer la foto. Intenta otra vez o escribe lo que dice la señal."],
+ ["No town name found on that sign. Get closer so the sign fills more of the photo, or type it below.","No encontré un pueblo en esa señal. Acércate para que la señal llene más la foto, o escríbelo abajo."],
+ ["Type what the road sign says. It fills in as you type.","Escribe lo que dice la señal. Se completa mientras escribes."],
+ ["The camera didn't open. Tap Take another photo to try again, type what the sign says below, or open this map in Chrome.","La cámara no abrió. Toca Otra foto para intentar de nuevo, escribe la señal abajo o abre el mapa en Chrome."],
+ ["Tip: tap the mic on your phone's keyboard to say it.","Consejo: toca el micrófono del teclado para decirlo."],
+ ["Tap here to set where you're starting","Toca aquí para elegir de dónde sales"],
+ ["Where are you starting from?","¿De dónde sales?"],["Where do you want to go?","¿A dónde quieres ir?"],
+ ["Navigate from where?","¿Navegar desde dónde?"],["Not right? Pick another","¿No es? Elige otro"],
+ ["Found you. Not shared (your pins are set to Only me)","Te encontré. No se compartió (tus marcadores están en Solo yo)"],
+ ["Type both X and Y, like 133 and 042","Escribe X y Y, por ejemplo 133 y 042"],
+ ["That's off the map. X and Y go from 000 to 163","Eso está fuera del mapa. X y Y van de 000 a 163"],
+ ["Couldn't save. Check your connection","No se guardó. Revisa tu conexión"],
+ ["You don't have permission to change this map","No tienes permiso para cambiar este mapa"],
+ ["Map is full. Delete some old pins first","El mapa está lleno. Borra algunos marcadores viejos"],
+ ["Ping shown here only (friends offline)","Aviso solo en tu pantalla (amigos desconectados)"],
+ ["Ping only shown on your screen","Aviso solo en tu pantalla"],["Couldn't share your spot right now","No se pudo compartir tu ubicación ahora"],
+ ["Set your position to get directions","Marca tu ubicación para ver la ruta"],["Type or say where you want to go","Escribe o di a dónde quieres ir"],
+ ["Working out where that is…","Buscando dónde queda…"],["Tap the map where you are","Toca el mapa donde estás"],
+ ["That code doesn't look right","Ese código no parece correcto"],["Give the group a name","Ponle nombre al grupo"],
+ ["Invite link copied. Paste it in WhatsApp","Invitación copiada. Pégala en WhatsApp"],
+ ["Long-press to pin or navigate","Mantén presionado para marcar o navegar"],
+ ["Paste an invite or code","Pega una invitación o código"],["New group name, e.g. Tenderloin squad","Nombre del grupo nuevo, ej. Escuadrón"],
+ ["Shown on your pins and pings","Se ve en tus marcadores y avisos"],
+ ["Loot, code lock, what's buried here…","Botín, candado, lo que está enterrado…"],
+ ["e.g. Main base, hidden tent","ej. Base principal, tienda escondida"],
+ ["Search town, pin, or grid like 133 042","Busca pueblo, marcador o cuadrícula como 133 042"],
+ ["e.g. Varzaneh, nearest water","ej. Varzaneh, agua más cercana"],
+ ["Grid (1 km, 100 m when zoomed)","Cuadrícula (1 km, 100 m con zoom)"],
+ ["Factories, refinery, terminal","Fábricas, refinería, terminal"],
+ ["Live · share to add a friend","En vivo · comparte para invitar"],["Reconnecting to live map…","Reconectando al mapa en vivo…"],
+ ["Offline · pins save on this phone","Sin conexión · se guarda en este teléfono"],
+ ["Tap a town name to see its grid","Toca un pueblo para ver su cuadrícula"],
+ ["Pick the one you're at.","Elige donde estás."],["Pick a username","Elige un nombre de usuario"],
+ ["Update from a new sign","Actualizar con otra señal"],["Update from a sign (type it)","Actualizar con una señal (escríbela)"],
+ ["Keep my current spot","Mantener mi ubicación"],["Or your coordinates","O tus coordenadas"],
+ ["Or type the town you're in","O escribe el pueblo donde estás"],["Town or road sign","Pueblo o señal"],
+ ["Take another photo","Otra foto"],["Type the sign instead","Mejor escribe la señal"],
+ ["Type the road sign","Escribe la señal"],["Snap a road sign","Foto de una señal"],["Type the sign","Escribe la señal"],
+ ["Add picture","Subir foto"],["Tap it on the map","Tócalo en el mapa"],["Town you're in","Pueblo donde estás"],
+ ["Show directions","Ver ruta"],["Stop navigation","Parar navegación"],["Navigate here","Navegar aquí"],
+ ["Drop pin here","Marcar aquí"],["Measure from here","Medir desde aquí"],["Copy coords","Copiar coordenadas"],
+ ["Danger ping","Aviso de peligro"],["Ping friends","Avisar a amigos"],["Change start","Cambiar inicio"],
+ ["Filters & groups","Filtros y grupos"],["Go to coordinates","Ir a coordenadas"],["Pins by type","Marcadores por tipo"],
+ ["Loot & events","Botín y eventos"],["Place markers","Marcadores de lugares"],["change username","cambiar nombre"],
+ ["Set your username","Elige tu nombre"],["Your username","Tu nombre de usuario"],["YOUR COLOR","TU COLOR"],
+ ["Camera check","Revisión de cámara"],["Road sign","Señal"],["SIGN SAYS","LA SEÑAL DICE"],["YOU ARE","ESTÁS"],
+ ["I found you","Te encontré"],["Found you at","Te encontré en"],["GPS mode","Modo GPS"],["Reading sign…","Leyendo señal…"],
+ ["Route saved","Ruta guardada"],["Route name","Nombre de la ruta"],["Save route","Guardar ruta"],
+ ["Pin dropped","Marcador puesto"],["Pin saved","Marcador guardado"],["Pin deleted","Marcador borrado"],
+ ["Tap again to delete","Toca otra vez para borrar"],["Left the group","Saliste del grupo"],["New pin","Nuevo marcador"],
+ ["Nearest water","Agua más cercana"],["Nearest town","Pueblo más cercano"],["Nearest military","Militar más cercano"],
+ ["My base","Mi base"],["Show all","Mostrar todo"],["Hide all","Ocultar todo"],["Start here","Salir de aquí"],
+ ["Drop pin","Poner marcador"],["Go here","Ir aquí"],["Copy grid","Copiar cuadrícula"],["Ping sent","Aviso enviado"],
+ ["Danger ping sent","Aviso de peligro enviado"],["Uploading map…","Subiendo mapa…"],["Type a username","Escribe un nombre"],
+ // camera log
+ ["Tap received","Toque recibido"],["photo gallery","galería de fotos"],["Viewer: full page","Visor: página completa"],
+ ["Asking the phone to open the","Pidiendo al teléfono abrir la"],["Gallery opened (map went to the background)","Galería abierta (el mapa pasó al fondo)"],
+ ["Camera opened (map went to the background)","Cámara abierta (el mapa pasó al fondo)"],["Photo received","Foto recibida"],
+ ["Photo copied into the map","Foto copiada al mapa"],["Reading the sign…","Leyendo la señal…"],["Sign reader ready","Lector listo"],
+ ["Found the sign on the photo, zooming in…","Encontré la señal en la foto, acercando…"],["Reading text on the photo…","Leyendo el texto de la foto…"],
+ ["Text found","Texto encontrado"],["Sign says","La señal dice"],["Nothing opened after 2 seconds.","No se abrió nada en 2 segundos."],
+ ["Downloading the sign reader (first time only, about 10 MB)…","Descargando el lector de señales (solo la primera vez, ~10 MB)…"],
+ ["Photo not readable yet, retrying","La foto aún no se puede leer, reintentando"],["Reading failed","Falló la lectura"],
+ // nav & steps
+ ["Arrived","Llegaste"],["Going to","Yendo a"],["on the road","por la carretera"],["cross-country","a campo traviesa"],
+ ["toward","hacia"],["Keep going","Sigue derecho"],["Sharp right","Muy a la derecha"],["Sharp left","Muy a la izquierda"],
+ ["Turn right","Gira a la derecha"],["Turn left","Gira a la izquierda"],["Head","Ve"],["min run","min corriendo"],
+ ["left ·","restantes ·"],["straight to","directo a"],["Step","Paso"],["steps","pasos"],["Arrive at","Llegada a"],
+ ["Route ready","Ruta lista"],["turns","giros"],["Navigating to","Navegando a"],["Nearest","Más cercano"],
+ ["Start set","Inicio marcado"],["Position updated. Route recalculated","Ubicación actualizada. Ruta recalculada"],
+ ["Your position is shared while this map is open","Tu ubicación se comparte mientras el mapa esté abierto"],
+ // groups, sections, misc
+ ["found a sign","encontró una señal"],["Shared with","Compartido con"],["marked danger","marcó peligro"],["pinged","avisó"],
+ ["Join my Nasdara group","Únete a mi grupo de Nasdara"],["created. Invite link copied","creado. Invitación copiada"],
+ ["Joined group","Te uniste al grupo"],["Joined","Te uniste a"],["You're","Eres"],["Copied","Copiado"],
+ ["Everyone","Todos"],["Only me","Solo yo"],["Only ","Solo "],["Groups","Grupos"],["Group","Grupo"],
+ ["Locations","Lugares"],["Military bases","Bases militares"],["Forts & strongholds","Fuertes"],["Military","Militar"],
+ ["Events","Eventos"],["Heli crash zones","Zonas de helicóptero caído"],["Wrecks","Restos"],["Industrial","Industrial"],
+ ["Landmarks","Puntos de referencia"],["Peaks","Picos"],["Areas & valleys","Áreas y valles"],["Lakes & rivers","Lagos y ríos"],
+ ["Cities","Ciudades"],["Towns","Pueblos"],["Villages","Aldeas"],["Labels","Etiquetas"],["Map","Mapa"],["You","Tú"],
+ ["Police stations","Estaciones de policía"],["Medical / hospitals","Médico / hospitales"],["Firefighter","Bomberos"],
+ ["Hunting cabins","Cabañas de caza"],["Civilian houses","Casas civiles"],["Farms","Granjas"],["Garages & sheds","Garajes y cobertizos"],
+ ["Coast","Costa"],["Vehicle spawns","Aparición de vehículos"],["Train wrecks","Trenes accidentados"],["Convoys","Convoyes"],
+ ["Police car wrecks","Patrullas accidentadas"],["Animals","Animales"],["Infected","Infectados"],["Contaminated areas","Zonas contaminadas"],
+ ["Player spawns","Aparición de jugadores"],["Heli crash","Helicóptero caído"],["Fire station","Bomberos"],
+ ["Base","Base"],["Stash","Escondite"],["Vehicle","Vehículo"],["Water","Agua"],["Food","Comida"],["Medical","Médico"],
+ ["Police","Policía"],["Tools","Herramientas"],["Enemy","Enemigo"],["Hunting","Caza"],["Garage","Garaje"],["Loot","Botín"],
+ ["Danger","Peligro"],["Note","Nota"],["Routes","Rutas"],["Notes","Notas"],["Name","Nombre"],
+ ["Move","Mover"],["Ruler","Regla"],["Route","Ruta"],["Ping","Aviso"],["I'm here","Estoy aquí"],["Pin","Marcar"],
+ ["Create","Crear"],["Join","Unirse"],["Leave","Salir"],["Share","Compartir"],["Save","Guardar"],["Delete","Borrar"],
+ ["Center","Centrar"],["Copy","Copiar"],["Clear","Borrar"],["Undo","Deshacer"],["Discard","Descartar"],["Start","Salir"],
+ ["Sure?","¿Seguro?"],["Connecting…","Conectando…"],["Live","En vivo"],["on map","en el mapa"],["just now","ahora mismo"],["ago","atrás"],
+ ["Town","Pueblo"],["City","Ciudad"],["Village","Aldea"],["Fort","Fuerte"],["Peak","Pico"],["Area","Área"],["Wreck","Restos"],
+ ["Heli crash zone","Zona de helicóptero caído"],["Industrial","Industrial"],["Grid","Cuadrícula"],["GRID","CUADRÍCULA"],["by","por"],
+];
+const esc2=s=>s.replace(/[.*+?^${}()|[\]\\]/g,"\\$&");
+const ES_RX=ES_PAIRS.slice().sort((a,b)=>b[0].length-a[0].length).map(([en,es])=>{
+  const pre=/^\w/.test(en)?"(?<![\\wÀ-ɏ])":"",post=/\w$/.test(en)?"(?![\\wÀ-ɏ])":"";
+  return[new RegExp(pre+esc2(en)+post,"g"),es]});
+let LANG=(()=>{const v=ls.get("lang",null);if(v==="es"||v==="en")return v;try{return /^es/i.test(navigator.language||"")?"es":"en"}catch{return"en"}})();
+function tr(str){if(LANG!=="es"||!str||typeof str!=="string")return str;const ph=[];
+  // keep place names untouched
+  let s=str.replace(PLACE_RX,m=>{ph.push(m);return"\u0001"+(ph.length-1)+"\u0002"});
+  for(const[re,rep]of ES_RX)s=s.replace(re,rep);
+  s=s.replace(/(\d\u00b0 )(NW|SW|W)(?![\w])/g,(_,a,c)=>a+({NW:"NO",SW:"SO",W:"O"})[c]);
+  return s.replace(/\u0001(\d+)\u0002/g,(_,i)=>ph[+i])}
+const PLACE_RX=new RegExp("(?<![\\w])("+PLACES.map(p=>esc2(p.n)).sort((a,b)=>b.length-a.length).join("|")+")(?![\\w])","g");
+const TR_ATTR=["placeholder","aria-label","title"];
+function trNode(n){
+  if(n.nodeType===3){const v=n.nodeValue;if(!v||!/[A-Za-z]/.test(v)||n.__trOut===v)return;
+    const p=n.parentNode;if(p&&(p.tagName==="SCRIPT"||p.tagName==="STYLE"||p.closest&&p.closest("[data-notr]")))return;
+    const out=tr(v);n.__trOut=out;if(out!==v)n.nodeValue=out;return}
+  if(n.nodeType===1){if(n.tagName==="SCRIPT"||n.tagName==="STYLE"||n.hasAttribute("data-notr"))return;
+    for(const a of TR_ATTR){const v=n.getAttribute(a);if(v&&n["__tr_"+a]!==v){const o=tr(v);n["__tr_"+a]=o;if(o!==v)n.setAttribute(a,o)}}
+    if(n.tagName==="INPUT"||n.tagName==="TEXTAREA")return;
+    for(const c of n.childNodes)trNode(c)}}
+let trObs=null;
+function applyLang(){document.documentElement.lang=LANG;if(LANG!=="es")return;trNode(document.body);
+  if(!trObs){trObs=new MutationObserver(ms=>{for(const m of ms){if(m.type==="characterData")trNode(m.target);else{m.addedNodes.forEach(trNode);if(m.type==="attributes")trNode(m.target)}}});
+    trObs.observe(document.body,{subtree:true,childList:true,characterData:true,attributes:true,attributeFilter:TR_ATTR})}}
+function setLang(l){if(l===LANG)return;ls.set("lang",l);location.reload()}
+function langRow(){return`<div class="row" data-notr><button type="button" class="btn grow" data-lang="en" aria-pressed="${LANG==="en"}" style="${LANG==="en"?"border-color:var(--accent);box-shadow:inset 0 0 0 1px var(--accent)":""}">English</button><button type="button" class="btn grow" data-lang="es" aria-pressed="${LANG==="es"}" style="${LANG==="es"?"border-color:var(--accent);box-shadow:inset 0 0 0 1px var(--accent)":""}">Español</button></div>`}
+function wireLang(el){el.querySelectorAll("[data-lang]").forEach(b=>b.onclick=()=>setLang(b.dataset.lang))}
+
+/* ---------- username ---------- */
+function setName(n){S.callsign=String(n||"").trim().replace(/\s+/g," ").slice(0,16);ls.set("callsign",S.callsign);
+  if(S.room)S.room.presence({name:S.callsign||"Friend"}).catch(()=>{});renderOnline();dirty()}
+function nameSheet(first){
+  openSheet(first?"Pick a username":"Your username",`
+    <p class="note" style="margin:0">${first?"Your friends see this on your pins, pings and your spot on the map.":"Shown to your friends on your pins, pings and position."}</p>
+    <form id="nF" class="row" style="flex-wrap:nowrap"><input type="text" id="nIn" maxlength="16" value="${esc(S.callsign)}" placeholder="e.g. Tenderloin" autocomplete="nickname" style="flex:1;min-width:0"><button class="btn pri" type="button" id="nOk">Save</button></form>
+    ${langRow()}
+    <div class="row" style="align-items:center;gap:8px"><span class="meta">YOUR COLOR</span>${COLORS.map(c=>`<button type="button" class="ibtn" data-col="${c}" aria-label="Color" style="width:34px;min-width:34px;height:34px;background:${c};${c===S.color?"outline:2px solid #fff;outline-offset:1px":""}"></button>`).join("")}</div>`,
+  el=>{wireLang(el);const inp=el.querySelector("#nIn");
+    const ok=()=>{const v=inp.value.trim();if(!v){toast("Type a username");return}setName(v);closeSheet();toast(`You're ${S.callsign}`)};
+    el.querySelector("#nOk").onclick=ok;inp.addEventListener("keydown",e=>{if(e.key==="Enter"){e.preventDefault();ok()}});
+    el.querySelector("#nF").onsubmit=e=>{e.preventDefault();ok()};
+    el.querySelectorAll("[data-col]").forEach(b=>b.onclick=()=>{S.color=b.dataset.col;ls.set("color",S.color);if(S.room)S.room.presence({color:S.color}).catch(()=>{});
+      el.querySelectorAll("[data-col]").forEach(x=>x.style.outline=x===b?"2px solid #fff":"none");renderOnline();dirty()});
+    setTimeout(()=>{try{inp.focus()}catch{}},250)});
+}
+
+/* ---------- groups ---------- */
+const GCOL=["#3fb8a8","#e6b24f","#f08aa0","#8fb3e0","#9fcf6a","#ff8a3d","#b05ad0","#e2563d","#5aa0e6","#d7b45a"];
+const okCode=c=>/^[a-z0-9]{4,24}$/.test(c||"");
+S.groups=(ls.get("groups",[])||[]).filter(g=>g&&okCode(g.code)).map(g=>({code:g.code,name:String(g.name||g.code).slice(0,24),color:safeColor(g.color)}));
+function saveGroups(){ls.set("groups",S.groups)}
+function gInfo(code){if(code==="me")return{code,name:S.callsign?`Only ${S.callsign}`:"Only me",color:"#a89c86"};if(!code||code==="map")return{code:"map",name:"Everyone",color:"#d9cdb4"};
+  return S.groups.find(g=>g.code===code)||{code,name:code,color:"#3fb8a8"}}
+function pinCol(g){return !g||g==="map"?"pins":"groups/"+g+"/pins"}
+function newCode(){const a="abcdefghjkmnpqrstuvwxyz23456789";let c="";const r=crypto.getRandomValues(new Uint8Array(8));for(const v of r)c+=a[v%a.length];return c}
+function addGroup(code,name){code=String(code||"").toLowerCase().replace(/[^a-z0-9]/g,"");if(!okCode(code))return null;
+  let g=S.groups.find(x=>x.code===code);if(!g){g={code,name:String(name||"Squad").trim().slice(0,24)||"Squad",color:GCOL[S.groups.length%GCOL.length]};S.groups.push(g);saveGroups();subGroup(code)}
+  S.hideG.delete(code);ls.set("hideG",[...S.hideG]);dirty();return g}
+function leaveGroup(code){S.groups=S.groups.filter(g=>g.code!==code);saveGroups();if(S.gUnsub&&S.gUnsub[code]){try{S.gUnsub[code]()}catch{}delete S.gUnsub[code]}
+  for(const k of [...S.pins.keys()])if(k.startsWith(code+"|"))S.pins.delete(k);if(S.lastG===code){S.lastG="map";ls.set("lastG","map")}dirty()}
+function groupLink(g){const onWeb=/^https?:$/.test(location.protocol)&&!/claude\.ai|claudeusercontent/.test(location.host);
+  return onWeb?`${location.origin}${location.pathname}?g=${g.code}&n=${encodeURIComponent(g.name)}`:""}
+function ingestPins(code,snap){const pre=code+"|";for(const k of [...S.pins.keys()])if(k.startsWith(pre))S.pins.delete(k);
+  snap.docs.forEach(d=>{const v=d.data();if(validPin(v))S.pins.set(pre+d.id,{...v,id:pre+d.id,did:d.id,g:code,x:clampW(v.x),y:clampW(v.y),type:T[v.type]?v.type:"note"})});dirty()}
+function subGroup(code){if(!S.db)return;S.gUnsub=S.gUnsub||{};if(S.gUnsub[code])return;
+  try{S.gUnsub[code]=S.db.collection(pinCol(code)).onSnapshot(sn=>ingestPins(code,sn),()=>{})}catch{}}
+function loadMine(){for(const k of [...S.pins.keys()])if(k.startsWith("me|"))S.pins.delete(k);
+  (ls.get("mypins",[])||[]).forEach(v=>{if(validPin(v))S.pins.set("me|"+v.did,{...v,id:"me|"+v.did,g:"me"})});dirty()}
+function saveMine(){ls.set("mypins",[...S.pins.values()].filter(p=>p.g==="me").map(p=>{const{id,g,...r}=p;return r}))}
+S.lastG=ls.get("lastG","map");
+// join from a shared link: ?g=code&n=Name
+try{const q=new URLSearchParams(location.search);if(q.get("g")){const g=addGroup(q.get("g"),q.get("n"));if(g){S.lastG=g.code;ls.set("lastG",g.code);S._joined=g}
+  history.replaceState(null,"",location.pathname)}}catch{}
+
 /* ---------- pins ---------- */
 function typeButtons(sel){return TYPES.map(t=>`<button type="button" data-t="${t.k}" aria-pressed="${t.k===sel}"><span class="sw" style="background:${t.c}">${esc(t.g)}</span><span>${t.n}</span></button>`).join("")}
 function pinSheet(p,isNew){
-  const[a,b]=grid(p.x,p.y);let type=p.type||"note";
+  const[a,b]=grid(p.x,p.y);let type=p.type||"note";let grp=p.g||(S.groups.some(g=>g.code===S.lastG)||S.lastG==="me"?S.lastG:"map");
   const mine=!p.by||p.by===S.uid||!S.shared;
   openSheet(isNew?"New pin":(p.label||T[type].n),`
-    <div class="meta">GRID ${a} / ${b}${p.byName?` · by ${esc(p.byName)}`:""}${p.at?` · ${ago(p.at)}`:""}</div>
+    <div class="meta">GRID ${a} / ${b}${!isNew?` · ${esc(gInfo(p.g).name)}`:""}${p.byName?` · by ${esc(p.byName)}`:""}${p.at?` · ${ago(p.at)}`:""}</div>
     <label class="f">Name<input type="text" id="pLabel" maxlength="40" value="${esc(p.label||"")}" placeholder="e.g. Main base, hidden tent"></label>
+    <div class="f" style="display:flex;flex-direction:column;gap:6px"><span style="font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em">Group</span>
+      <div class="gchips" id="pGrp">${["map",...S.groups.map(g=>g.code),"me"].map(c=>{const gi=gInfo(c);return`<button type="button" data-g="${esc(c)}" aria-pressed="${c===grp}"><span class="gdot" style="background:${gi.color}">${esc(gi.name.slice(0,1).toUpperCase())}</span>${esc(gi.name)}</button>`}).join("")}</div></div>
     <div class="types" id="pTypes">${typeButtons(type)}</div>
     <label class="f">Notes<textarea id="pNote" maxlength="400" placeholder="Loot, code lock, what's buried here…">${esc(p.note||"")}</textarea></label>
     <div class="row">
@@ -818,26 +1080,34 @@ function pinSheet(p,isNew){
     </div>
     ${!S.canWrite?`<p class="note">You can view pins, but the map owner needs to give you Contributor access before you can add or change them.</p>`:""}`,
   el=>{
+    el.querySelector("#pGrp").onclick=e=>{const bt=e.target.closest("button");if(!bt)return;grp=bt.dataset.g;el.querySelectorAll("#pGrp button").forEach(x=>x.setAttribute("aria-pressed",String(x===bt)))};
     el.querySelector("#pTypes").onclick=e=>{const bt=e.target.closest("button");if(!bt)return;type=bt.dataset.t;el.querySelectorAll("#pTypes button").forEach(x=>x.setAttribute("aria-pressed",String(x===bt)))};
     el.querySelector("#pSave").onclick=async()=>{
-      const data={x:Math.round(p.x),y:Math.round(p.y),type,label:el.querySelector("#pLabel").value.trim().slice(0,40),note:el.querySelector("#pNote").value.trim().slice(0,400),at:Date.now(),by:p.by||S.uid||"local",byName:p.byName||S.callsign||"Someone"};
-      ls.set("lastType",type);closeSheet();await savePin(p.id,data);toast(isNew?"Pin dropped":"Pin saved");};
+      const data={x:Math.round(p.x),y:Math.round(p.y),type,label:el.querySelector("#pLabel").value.trim().slice(0,40),note:el.querySelector("#pNote").value.trim().slice(0,400),at:Date.now(),by:p.by||S.uid||"local",byName:p.byName||S.callsign||"Someone",g:grp};if(!S.callsign){closeSheet();nameSheet(true);return}
+      ls.set("lastType",type);S.lastG=grp;ls.set("lastG",grp);closeSheet();await savePin(isNew?null:p,data);toast(isNew?"Pin dropped":"Pin saved");};
     const go=el.querySelector("#pGo");if(go)go.onclick=()=>{closeSheet();centerOn(p.x,p.y,Math.max(V.s,.12));updateCoords()};
     const cp=el.querySelector("#pCopy");if(cp)cp.onclick=()=>copy(`${a} ${b}`);
     const nv=el.querySelector("#pNav");if(nv)nv.onclick=()=>startNav({x:p.x,y:p.y,n:p.label||T[p.type].n});
-    const del=el.querySelector("#pDel");if(del)del.onclick=()=>{del.textContent="Tap again to delete";del.onclick=async()=>{closeSheet();await deletePin(p.id);toast("Pin deleted")}};
+    const del=el.querySelector("#pDel");if(del)del.onclick=()=>{del.textContent="Tap again to delete";del.onclick=async()=>{closeSheet();await deletePin(p);toast("Pin deleted")}};
   });
 }
-async function savePin(id,data){
-  if(S.db){try{if(id)await S.db.collection("pins").doc(id).set(data);else await S.db.collection("pins").add(data);return}catch(e){return writeFail(e)}}
-  id=id||"l"+Date.now();S.pins.set(id,{id,...data});persistLocal();dirty();
+async function savePin(p,data){
+  const g=data.g||"map",clean={...data};delete clean.g;
+  // moved to another group: remove the old copy first
+  if(p&&p.id&&p.g&&p.g!==g)await deletePin(p,true);
+  const did=(p&&p.g===g&&p.did)||null;
+  if(g==="me"){const id=did||("m"+Date.now().toString(36));S.pins.set("me|"+id,{...clean,id:"me|"+id,did:id,g:"me"});saveMine();dirty();return}
+  if(S.db){try{const c=S.db.collection(pinCol(g));if(did)await c.doc(did).set(clean);else await c.add(clean);return}catch(e){return writeFail(e)}}
+  const id=did||"l"+Date.now();S.pins.set(g+"|"+id,{...clean,id:g+"|"+id,did:id,g});persistLocal();dirty();
 }
-async function deletePin(id){
-  if(S.db){try{await S.db.collection("pins").doc(id).delete();return}catch(e){return writeFail(e)}}
-  S.pins.delete(id);persistLocal();dirty();
+async function deletePin(p,quiet){
+  if(!p)return;
+  if(p.g==="me"){S.pins.delete(p.id);saveMine();dirty();return}
+  if(S.db){try{await S.db.collection(pinCol(p.g)).doc(p.did).delete();return}catch(e){if(!quiet)writeFail(e);return}}
+  S.pins.delete(p.id);persistLocal();dirty();
 }
 function writeFail(e){if(e&&e.code==="invalid_argument"){S.canWrite=false;toast("You don't have permission to change this map")}else if(e&&e.code==="quota_exceeded")toast("Map is full. Delete some old pins first");else toast("Couldn't save. Check your connection")}
-function persistLocal(){ls.set("pins",[...S.pins.values()]);ls.set("routes",[...S.routes.values()])}
+function persistLocal(){ls.set("pins",[...S.pins.values()].filter(p=>p.g!=="me"));ls.set("routes",[...S.routes.values()])}
 
 /* ---------- routes ---------- */
 function saveRouteSheet(){
@@ -860,6 +1130,15 @@ function saveRouteSheet(){
 async function deleteRoute(id){if(S.db){try{await S.db.collection("routes").doc(id).delete()}catch(e){writeFail(e)}}else{S.routes.delete(id);persistLocal()}dirty()}
 
 /* ---------- pings & position ---------- */
+/* after a sign is read from a photo, show the group where you are */
+function shareSign(pl){
+  const g=S.lastG==="me"?null:(S.lastG||"map");
+  if(!g){toast("Found you. Not shared (your pins are set to Only me)");return}
+  const gi=gInfo(g),d={x:Math.round(pl.x),y:Math.round(pl.y),kind:"sign",place:String(pl.n).slice(0,40),name:S.callsign||"Friend",g};
+  S.pings.push({...d,at:performance.now()});S.anim=true;dirty();
+  S.seen={place:d.place,at:Date.now()};if(S.room)S.room.presence({seen:S.seen}).catch(()=>{});
+  if(S.room)S.room.emit("ping",d).then(()=>toast(`📍 Shared with ${gi.name}: ${pl.n}`),()=>toast("Couldn't share your spot right now"));
+}
 function sendPing(x,y,kind){
   const pg={x:Math.round(x),y:Math.round(y),kind,name:S.callsign||"You",at:performance.now()};S.pings.push(pg);S.anim=true;dirty();
   if(S.room){S.room.emit("ping",{x:pg.x,y:pg.y,kind,name:S.callsign||"Friend"}).then(()=>toast(kind==="danger"?"Danger ping sent":"Ping sent"),()=>toast("Ping only shown on your screen"))}
@@ -901,21 +1180,26 @@ function wireCams(root){root.querySelectorAll("label.camlbl").forEach(l=>{
     diag(f?`✓ Photo received (${Math.max(1,Math.round(f.size/1024))} KB${f.type?", "+f.type:""})`:"Picker closed without a photo");
     S._gotPhoto=!!f;let mem=null;
     // Copy the photo into memory BEFORE touching the picker: on Android, removing it can revoke read access.
-    if(f){try{const buf=await f.arrayBuffer();mem=new File([buf],f.name||"photo.jpg",{type:f.type||"image/jpeg"});diag("✓ Photo copied into the map")}
+    if(f){try{let buf=null,err=null;for(let k=0;k<4&&!buf;k++){try{buf=await f.arrayBuffer()}catch(e){err=e;diag(`Photo not readable yet, retrying (${k+1}/3)…`);await new Promise(r=>setTimeout(r,500*(k+1)))}}if(!buf)throw err;mem=new File([buf],f.name||"photo.jpg",{type:f.type||"image/jpeg"});diag("✓ Photo copied into the map")}
       catch(e){diag("✗ Couldn't copy the photo: "+((e&&e.name)||"error"))}}
     const fresh=inp.cloneNode();fresh.value="";inp.replaceWith(fresh);bind(fresh);
     if(f)readSign(mem||f)});
   const i=l.querySelector("input.camin");if(i)bind(i);
 })}
-let diagEl=null;
-function diagOpen(){if(!diagEl){diagEl=document.createElement("div");diagEl.id="diag";
+let diagEl=null;const DLOG=[];
+const bell=document.getElementById("bBell"),bdot=bell.querySelector(".bdot");
+function diagPanel(){if(!diagEl){diagEl=document.createElement("div");diagEl.id="diag";diagEl.hidden=true;
     diagEl.innerHTML=`<div class="dh"><b>Camera check</b><button type="button" class="ibtn" id="diagX" aria-label="Close diagnostics">✕</button></div><div class="dl" id="diagL"></div><div class="row" id="diagA" hidden><button type="button" class="btn grow" id="diagType">Type the sign instead</button></div>`;
     document.body.appendChild(diagEl);diagEl.querySelector("#diagX").onclick=()=>{diagEl.hidden=true};
-    diagEl.querySelector("#diagType").onclick=()=>{diagEl.hidden=true;signSheet("",[],false)}}
-  diagEl.hidden=false;diagEl.querySelector("#diagL").innerHTML="";diagEl.querySelector("#diagA").hidden=true}
-function diag(msg){if(!diagEl||diagEl.hidden)return;const L=diagEl.querySelector("#diagL"),d=new Date();
-  const t=`${String(d.getMinutes()).padStart(2,"0")}:${String(d.getSeconds()).padStart(2,"0")}`;
-  const row=document.createElement("div");row.textContent=`${t}  ${msg}`;L.appendChild(row);L.scrollTop=L.scrollHeight}
+    diagEl.querySelector("#diagType").onclick=()=>{diagEl.hidden=true;signSheet("",[],false)}}return diagEl}
+function diagRender(){const L=diagPanel().querySelector("#diagL");L.innerHTML="";DLOG.forEach(r=>{const d=document.createElement("div");d.textContent=r;if(/✗/.test(r))d.className="bad";L.appendChild(d)});L.scrollTop=L.scrollHeight;
+  diagEl.querySelector("#diagA").hidden=!DLOG.some(r=>/✗/.test(r))}
+function diagOpen(){DLOG.length=0;if(diagEl&&!diagEl.hidden)diagRender()}  // start a fresh log, keep the panel closed
+function diag(msg){const d=new Date(),t=`${String(d.getHours()).padStart(2,"0")}:${String(d.getMinutes()).padStart(2,"0")}:${String(d.getSeconds()).padStart(2,"0")}`;
+  DLOG.push(`${t}  ${msg}`);if(DLOG.length>60)DLOG.shift();bell.hidden=false;
+  if(/✗/.test(msg)){bdot.hidden=false;bell.classList.add("alert")}
+  if(diagEl&&!diagEl.hidden)diagRender()}
+bell.onclick=()=>{diagRender();diagEl.hidden=!diagEl.hidden;bdot.hidden=true;bell.classList.remove("alert")};
 window.__diag=diag;
 function camDiag(gal){S._gotPhoto=false;diagOpen();diag(`✓ Tap received: ${gal?"Add picture (photo gallery)":"Snap a road sign (camera)"}`);
   let emb=false;try{emb=window.self!==window.top}catch{emb=true}
@@ -931,7 +1215,7 @@ function camDiag(gal){S._gotPhoto=false;diagOpen();diag(`✓ Tap received: ${gal
     diag(emb||wv?(/claude\.ai/.test(location.ancestorOrigins&&location.ancestorOrigins[0]||document.referrer||"")||!/^(file|content):/.test(location.protocol)
       ?"The Claude app's viewer blocks the camera and photo picker. Fix: open Chrome, go to claude.ai (signed in), and open this map's link there."
       :"This viewer is blocking the camera and photo picker. Fix: tap the download icon at the top, then open the file with Chrome."):"The browser didn't open it. In phone Settings → Apps → Chrome → Permissions, allow Camera and Photos, then try again.");
-    const a=diagEl&&diagEl.querySelector("#diagA");if(a)a.hidden=false},2000);
+    },2000);
 }
 /* Load a picture several ways: some viewers (files opened from Downloads) block blob: URLs. */
 async function loadPic(file){
@@ -979,7 +1263,7 @@ Reply only with JSON: {"sign_text": string, "places": [{"name": "exact name from
   S.lastSign={text,cands};
   const top=cands[0];
   if(top&&top.kind==="entering"&&(cands.length===1||cands[1].kind==="direction")){
-    setMyPos(top.p.x,top.p.y,true);centerOn(top.p.x,top.p.y,Math.max(V.s,.08));updateCoords();
+    setMyPos(top.p.x,top.p.y,true);centerOn(top.p.x,top.p.y,Math.max(V.s,.08));updateCoords();shareSign(top.p);
     gpsSheet(`Found you at ${top.p.n}`);return}
   signSheet(text,cands,failed);
 }
@@ -998,10 +1282,10 @@ function signSheet(text,cands,failed){
     ${S.sample&&!S.camBlocked?`<div class="row">${camBtn("sgAgain",false,"Take another photo","grow")+camBtn("sgPick",true,"Add picture","grow")}</div>`:""}`,
   el=>{
     let typed=[];
-    const act=(box,get)=>box.onclick=e=>{const h=e.target.closest("[data-here]"),g=e.target.closest("[data-go]");if(!h&&!g)return;
+    const act=(box,get,photo)=>box.onclick=e=>{const h=e.target.closest("[data-here]"),g=e.target.closest("[data-go]");if(!h&&!g)return;
       const c=get()[+(h?h.dataset.here:g.dataset.go)];if(!c)return;
-      if(h){setMyPos(c.p.x,c.p.y,true);centerOn(c.p.x,c.p.y,Math.max(V.s,.08));updateCoords();gpsSheet(`Found you at ${c.p.n}`)}else startNav(c.p)};
-    act(el.querySelector("#sgC"),()=>cands);act(el.querySelector("#sgM"),()=>typed);
+      if(h){setMyPos(c.p.x,c.p.y,true);centerOn(c.p.x,c.p.y,Math.max(V.s,.08));updateCoords();if(photo)shareSign(c.p);gpsSheet(`Found you at ${c.p.n}`)}else startNav(c.p)};
+    act(el.querySelector("#sgC"),()=>cands,!!text);act(el.querySelector("#sgM"),()=>typed);
     el.querySelector("#sgT").oninput=e=>{typed=matchName(e.target.value).map(o=>({p:o.p,kind:"entering"}));el.querySelector("#sgM").innerHTML=signRows(typed)};
     wireCams(el);
   });
@@ -1121,7 +1405,7 @@ function buildSteps(pts,road){
   const m=[];
   for(const l of legs){const p=m[m.length-1];const turn=p?((l.brg-p.brg+540)%360)-180:999;
     if(p&&(Math.abs(turn)<28||l.len<70)&&(p.road>.5)===(l.road>.5)){const tot=p.len+l.len;p.road=(p.road*p.len+l.road*l.len)/tot;p.len=tot;p.b=l.b;p.brg=bearing(pts[p.a],pts[p.b])}else m.push({...l})}
-  m.forEach((l,i)=>{const end=pts[l.b];let lm=null,bd=650;PLACES.forEach(p=>{const d=dist([p.x,p.y],end);if(d<bd){bd=d;lm=p}});l.toward=lm?lm.n:null;
+  m.forEach((l,i)=>{const end=pts[l.b];let lm=null,bd=650;PLACES.forEach(p=>{if(p.k==="heli")return;const d=dist([p.x,p.y],end);if(d<bd){bd=d;lm=p}});l.toward=lm?lm.n:null;
     const prev=m[i-1];l.turn=prev?((l.brg-prev.brg+540)%360)-180:0});
   return{pts,steps:m,total:m.reduce((s,l)=>s+l.len,0)};
 }
@@ -1225,35 +1509,63 @@ document.getElementById("bSearch").onclick=()=>{
 };
 
 /* ---------- layers & settings ---------- */
-document.getElementById("bLayers").onclick=()=>{
+const FILTERS=[
+  {sec:"Locations",items:[["city","Cities"],["town","Towns"],["village","Villages"]]},
+  {sec:"Military",items:[["military","Military bases"],["fort","Forts & strongholds"]]},
+  {sec:"Events",items:[["heli","Heli crash zones"],["wreck","Wrecks"]]},
+  {sec:"Industrial",items:[["industry","Factories, refinery, terminal"]]},
+  {sec:"Landmarks",items:[["peak","Peaks"],["area","Areas & valleys"],["water","Lakes & rivers"]]},
+];
+const SOON=["Police stations","Medical / hospitals","Firefighter","Hunting cabins","Civilian houses","Farms","Garages & sheds","Coast","Vehicle spawns","Train wrecks","Convoys","Police car wrecks","Animals","Infected","Contaminated areas","Player spawns"];
+function layersSheet(){
   const counts={};for(const p of S.pins.values())counts[p.type]=(counts[p.type]||0)+1;
-  openSheet("Layers & squad",`
-    <div class="sec">Your callsign</div>
-    <div class="row"><input type="text" id="cs" maxlength="16" value="${esc(S.callsign)}" placeholder="Shown on your pins and pings" style="flex:1;min-width:0"></div>
-    <div class="sec">Pin layers</div>
-    <div class="list">${TYPES.map(t=>`<label class="tog"><input type="checkbox" data-k="${t.k}" ${S.hidden.has(t.k)?"":"checked"}><span class="sw" style="background:${t.c}">${esc(t.g)}</span><span style="flex:1">${t.n}</span><span class="meta">${counts[t.k]||0}</span></label>`).join("")}</div>
-    <div class="row"><button class="btn grow" id="lAll">Show all</button><button class="btn grow" id="lNone">Hide all</button></div>
+  const kc={};PLACES.forEach(p=>kc[p.k]=(kc[p.k]||0)+1);
+  const gCount=c=>[...S.pins.values()].filter(p=>p.g===c).length;
+  const gRow=c=>{const gi=gInfo(c),fixed=c==="map"||c==="me";return`<div class="grow2"><label class="tog" style="flex:1;min-width:0"><input type="checkbox" data-gv="${esc(c)}" ${S.hideG.has(c)?"":"checked"}><span class="gdot" style="background:${gi.color}">${esc(gi.name.slice(0,1).toUpperCase())}</span><span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(gi.name)}${fixed?"":` <span class="meta">${esc(c)}</span>`}</span><span class="meta">${gCount(c)}</span></label>${fixed?"":`<button class="btn" data-gs="${esc(c)}" style="height:40px;padding:0 10px">Share</button><button class="btn dng" data-gl="${esc(c)}" style="height:40px;padding:0 10px">Leave</button>`}</div>`};
+  openSheet("Filters & groups",`
+    <div class="sec">Groups</div>
+    <p class="note" style="margin:0">Each group has its own private pins. Only people with the group code see them. <b>Everyone</b> is the open map; <b>Only me</b> stays on this phone.</p>
+    <div class="list">${["map",...S.groups.map(g=>g.code),"me"].map(gRow).join("")}</div>
+    <div class="row"><input type="text" id="gName" maxlength="24" placeholder="New group name, e.g. Tenderloin squad" style="flex:1;min-width:0"><button class="btn pri" id="gNew">Create</button></div>
+    <div class="row"><input type="text" id="gCode" maxlength="24" placeholder="Paste an invite or code" autocapitalize="off" style="flex:1;min-width:0"><button class="btn" id="gJoin">Join</button></div>
+    <div class="sec">You</div>
+    <button class="btn" id="cs" style="justify-content:flex-start;display:flex;align-items:center;gap:10px"><span class="gdot" style="background:${S.color}">${esc((S.callsign||"?").slice(0,1).toUpperCase())}</span>${S.callsign?esc(S.callsign)+" · change username":"Set your username"}</button>
+    <div class="sec">Language · Idioma</div>
+    ${langRow()}
     <div class="sec">Map</div>
     <label class="tog"><input type="checkbox" id="oLab" ${S.labels?"checked":""}><span>Labels</span></label>
     <label class="tog"><input type="checkbox" id="oGrid" ${S.grid?"checked":""}><span>Grid (1 km, 100 m when zoomed)</span></label>
-    ${`<label class="tog"><input type="checkbox" id="oEx" ${S.examples?"checked":""}><span>Towns, bases, peaks & highways (${PLACES.length} places)</span></label>`}
-    <div class="sec">Real Nasdara map</div>
-    <p class="note">${S.mapImg?"A real map image is loaded for everyone.":"The terrain shading is a placeholder, but town and base names are real. Upload a full-map screenshot (square, north up) and it replaces the placeholder for you and your friend."}</p>
-    ${S.assets?`<div class="row"><label class="btn pri grow" style="display:flex;align-items:center;justify-content:center">Upload map image<input type="file" id="mapFile" accept="image/*" hidden></label>${S.mapUrl?`<button class="btn dng" id="mapClear">Remove</button>`:""}</div>`:``}
-    <div class="sec">Sharing</div>
-    <p class="note">${S.shared?"Pins, routes, pings, and positions sync live with everyone who opens this map.":"Can't reach the live relay right now, so pins save on this phone until it reconnects."} Forward this file in WhatsApp. Everyone who opens it joins the same live map.</p>`,
+    <label class="tog"><input type="checkbox" id="oEx" ${S.examples?"checked":""}><span>Place markers (${PLACES.length})</span></label>
+    ${FILTERS.map(f=>`<div class="sec">${f.sec}</div><div class="list">${f.items.map(([k,n])=>`<label class="tog"><input type="checkbox" data-pk="${k}" ${S.hideK.has(k)?"":"checked"}><span class="sw" style="background:${PK[k]?PK[k].c:"#888"}"></span><span style="flex:1">${n}</span><span class="meta">${kc[k]||0}</span></label>`).join("")}</div>`).join("")}
+    <div class="sec">Pins by type</div>
+    <div class="list">${TYPES.map(t=>`<label class="tog"><input type="checkbox" data-k="${t.k}" ${S.hidden.has(t.k)?"":"checked"}><span class="sw" style="background:${t.c}">${esc(t.g)}</span><span style="flex:1">${t.n}</span><span class="meta">${counts[t.k]||0}</span></label>`).join("")}</div>
+    <div class="row"><button class="btn grow" id="lAll">Show all</button><button class="btn grow" id="lNone">Hide all</button></div>
+    <div class="sec">Loot &amp; events</div>
+    <p class="note" style="margin:0">These fill in automatically once DayZ publishes Nasdara's official loot files.</p>
+    <div class="soon">${SOON.map(n=>`<span>${n}</span>`).join("")}</div>`,
   el=>{
-    el.querySelector("#cs").onchange=e=>{S.callsign=e.target.value.trim().slice(0,16);ls.set("callsign",S.callsign);if(S.room)S.room.presence({name:S.callsign||"Friend"}).catch(()=>{});renderOnline()};
+    el.querySelector("#cs").onclick=()=>nameSheet();wireLang(el);
+    el.querySelectorAll("[data-gv]").forEach(c=>c.onchange=()=>{c.checked?S.hideG.delete(c.dataset.gv):S.hideG.add(c.dataset.gv);ls.set("hideG",[...S.hideG]);dirty()});
+    el.querySelectorAll("[data-gs]").forEach(b=>b.onclick=()=>{const g=gInfo(b.dataset.gs),link=groupLink(g);
+      copy(link?`Join my Nasdara group "${g.name}": ${link}`:`Join my Nasdara group "${g.name}". Code: ${g.code}`);
+      toast(link?"Invite link copied. Paste it in WhatsApp":`Code ${g.code} copied. Friends tap Filters → Join`)});
+    el.querySelectorAll("[data-gl]").forEach(b=>b.onclick=()=>{if(b.dataset.armed){leaveGroup(b.dataset.gl);layersSheet();toast("Left the group")}else{b.dataset.armed=1;b.textContent="Sure?"}});
+    el.querySelector("#gNew").onclick=()=>{const n=el.querySelector("#gName").value.trim();if(!n){toast("Give the group a name");return}
+      const g=addGroup(newCode(),n);S.lastG=g.code;ls.set("lastG",g.code);layersSheet();
+      const link=groupLink(g);copy(link?`Join my Nasdara group "${g.name}": ${link}`:`Join my Nasdara group "${g.name}". Code: ${g.code}`);
+      toast(link?`"${g.name}" created. Invite link copied`:`"${g.name}" created. Code ${g.code} copied`)};
+    el.querySelector("#gJoin").onclick=()=>{const raw=el.querySelector("#gCode").value.trim();const m=raw.match(/[?&]g=([a-z0-9]+)/i)||raw.match(/code:\s*([a-z0-9]+)/i);const c=(m?m[1]:raw).toLowerCase();
+      const nm=(raw.match(/"([^"]{1,24})"/)||[])[1];const g=addGroup(c,nm||("Squad "+c.slice(0,4)));if(!g){toast("That code doesn't look right");return}layersSheet();toast(`Joined ${g.name}. Rename it by leaving and re-creating, or keep it`)};
+    el.querySelectorAll("[data-pk]").forEach(c=>c.onchange=()=>{c.checked?S.hideK.delete(c.dataset.pk):S.hideK.add(c.dataset.pk);ls.set("hideK",[...S.hideK]);dirty()});
     el.querySelectorAll("[data-k]").forEach(c=>c.onchange=()=>{c.checked?S.hidden.delete(c.dataset.k):S.hidden.add(c.dataset.k);ls.set("hidden",[...S.hidden]);dirty()});
     el.querySelector("#lAll").onclick=()=>{S.hidden.clear();ls.set("hidden",[]);el.querySelectorAll("[data-k]").forEach(c=>c.checked=true);dirty()};
     el.querySelector("#lNone").onclick=()=>{TYPES.forEach(t=>S.hidden.add(t.k));ls.set("hidden",[...S.hidden]);el.querySelectorAll("[data-k]").forEach(c=>c.checked=false);dirty()};
     el.querySelector("#oLab").onchange=e=>{S.labels=e.target.checked;ls.set("labels",S.labels);dirty()};
     el.querySelector("#oGrid").onchange=e=>{S.grid=e.target.checked;ls.set("grid",S.grid);dirty()};
-    const ex=el.querySelector("#oEx");if(ex)ex.onchange=e=>{S.examples=e.target.checked;ls.set("examples",S.examples);dirty()};
-    const mf=el.querySelector("#mapFile");if(mf)mf.onchange=uploadMap;
-    const mc=el.querySelector("#mapClear");if(mc)mc.onclick=async()=>{try{await S.db.doc("settings/map").set({url:null,at:Date.now()});toast("Placeholder map restored")}catch(e){writeFail(e)}closeSheet()};
+    el.querySelector("#oEx").onchange=e=>{S.examples=e.target.checked;ls.set("examples",S.examples);dirty()};
   });
-};
+}
+document.getElementById("bLayers").onclick=layersSheet;
 async function uploadMap(e){
   const f=e.target.files&&e.target.files[0];if(!f)return;closeSheet();toast("Uploading map…");
   try{const r=await S.assets.upload(f);if(S.db)await S.db.doc("settings/map").set({url:r.url,at:Date.now()});else loadMap(r.url);toast("Map image loaded")}
@@ -1268,13 +1580,15 @@ function loadMap(url){
 function renderOnline(){
   const el=document.getElementById("online");
   const people=S.peers.filter(p=>p.kind==="viewer");
-  el.innerHTML=people.slice(0,4).map(p=>{const n=String(p.presence&&p.presence.name||"?");return`<span class="dot" title="${esc(p.isMe?"You":n)}" style="background:${safeColor(p.presence&&p.presence.color)}">${esc((p.isMe?(S.callsign||"Me"):n).slice(0,2).toUpperCase())}</span>`}).join("")+(people.length>4?`<span class="meta">+${people.length-4}</span>`:"");
+  el.innerHTML=people.slice(0,4).map(p=>{const n=String(p.presence&&p.presence.name||"?");return`<span data-notr class="dot${p.isMe?" me":""}" ${p.isMe?'role="button" tabindex="0" data-me="1"':""} title="${esc(p.isMe?(S.callsign||"Set your username"):n)}" style="background:${safeColor(p.presence&&p.presence.color)}">${esc((p.isMe?(S.callsign||"?"):n).slice(0,2).toUpperCase())}</span>`}).join("")+(people.length>4?`<span class="meta">+${people.length-4}</span>`:"");
+  if(!people.length)el.innerHTML=`<span class="dot me" role="button" tabindex="0" data-me="1" style="background:${S.color}">${esc((S.callsign||"?").slice(0,2).toUpperCase())}</span>`;
+  el.querySelectorAll("[data-me]").forEach(d=>d.onclick=()=>nameSheet());
   const st=document.getElementById("status");
   if(S.shared){st.textContent=people.length>1?`Live · ${people.length} on map`:"Live · share to add a friend";st.className="chip"}
 }
 
 /* ---------- connect capabilities ---------- */
-function loadLocal(){(ls.get("pins",[])).forEach(p=>S.pins.set(p.id,p));(ls.get("routes",[])).forEach(r=>S.routes.set(r.id,r));dirty()}
+function loadLocal(){(ls.get("pins",[])).forEach(p=>{if(!validPin(p))return;const g=p.g||"map",did=p.did||String(p.id).split("|").pop();S.pins.set(g+"|"+did,{...p,g,did,id:g+"|"+did})});loadMine();(ls.get("routes",[])).forEach(r=>S.routes.set(r.id,r));dirty()}
 function validPin(d){return d&&typeof d==="object"&&isFinite(d.x)&&isFinite(d.y)}
 async function connect(){
   const st=document.getElementById("status");
@@ -1286,7 +1600,7 @@ async function connect(){
     const cw=await user.can("data.write");if(cw===false)S.canWrite=false}catch{}}
   if(db){
     S.db=db;S.shared=true;
-    db.collection("pins").onSnapshot(snap=>{S.pins.clear();snap.docs.forEach(d=>{const v=d.data();if(validPin(v))S.pins.set(d.id,{id:d.id,...v,x:clampW(v.x),y:clampW(v.y),type:T[v.type]?v.type:"note"})});dirty()},()=>{st.textContent="Sync lost · reopen the map";st.className="chip bad"});
+    subGroup("map");S.groups.forEach(g=>subGroup(g.code));loadMine();
     db.collection("routes").onSnapshot(snap=>{S.routes.clear();snap.docs.forEach(d=>{const v=d.data();if(v&&Array.isArray(v.pts))S.routes.set(d.id,{id:d.id,...v,pts:v.pts.filter(p=>Array.isArray(p)).map(p=>[clampW(p[0]),clampW(p[1])])})});dirty()},()=>{});
     db.collection("detail").onSnapshot(snap=>{DETAIL.length=0;snap.docs.forEach(d=>{const v=d.data();if(!v||typeof v.url!=="string"||!/^(\/_blob\/[0-9a-f]+$|data:image\/)/.test(v.url)||![v.x0,v.y0,v.x1,v.y1].every(isFinite))return;const t={x0:+v.x0,y0:+v.y0,x1:+v.x1,y1:+v.y1,img:null};const im=new Image();im.onload=()=>{t.img=im;dirty()};im.src=v.url;DETAIL.push(t)});dirty()},()=>{});
     db.doc("settings/roads").onSnapshot(sn=>{const v=sn.exists?sn.data():null;if(v&&typeof v.url==="string"&&/^(\/_blob\/[0-9a-f]+$|data:image\/)/.test(v.url)&&v.url!==S.roadsUrl){S.roadsUrl=v.url;loadRoads(v.url)}},()=>{});
@@ -1297,6 +1611,11 @@ async function connect(){
     room.presence({name:S.callsign||"Friend",color:S.color,pos:S.myPos}).catch(()=>{});
     room.onPeers(ch=>{S.peers=[...ch.peers];renderOnline();dirty()});
     room.on("ping",m=>{const d=m.data||{};if(m.sameTab||!isFinite(d.x)||!isFinite(d.y))return;
+      if(d.g&&d.g!=="map"&&!S.groups.some(g=>g.code===d.g))return;   // group-only ping, not my group
+      if(d.kind==="sign"){const nm=String(d.name||"Friend").slice(0,16),pl=String(d.place||"").slice(0,40);
+        S.pings.push({x:clampW(d.x),y:clampW(d.y),kind:"sign",name:nm,place:pl,at:performance.now()});S.anim=true;dirty();
+        toast(`📍 ${nm} found a sign: ${pl} · ${grid(d.x,d.y).join(" / ")}${d.g&&d.g!=="map"?" ("+gInfo(d.g).name+")":""}`);
+        if(navigator.vibrate)try{navigator.vibrate([40,40,40])}catch{}return}
       S.pings.push({x:clampW(d.x),y:clampW(d.y),kind:d.kind==="danger"?"danger":"ping",name:String(d.name||"Friend").slice(0,16),at:performance.now()});S.anim=true;dirty();
       toast(`${String(d.name||"Friend").slice(0,16)} ${d.kind==="danger"?"marked danger":"pinged"} at ${grid(d.x,d.y).join(" / ")}`);
       if(navigator.vibrate)try{navigator.vibrate(d.kind==="danger"?[80,60,80]:40)}catch{}});
@@ -1309,6 +1628,9 @@ window.addEventListener("resize",resize);
 resize();
 setTimeout(()=>{buildTerrain();dirty()},0);
 requestAnimationFrame(loop);
+applyLang();
+window.__nfm={S,pinSheet,gInfo,centerOn,dirty};
+setTimeout(()=>{if(!S.callsign)nameSheet(true);else if(S._joined)toast(`Joined group "${S._joined.name}"`)},900);
 updateCoords();
 loadMap(window.__MAP);S.roadsUrl=window.__ROADS;loadRoads(S.roadsUrl);
 connect();
