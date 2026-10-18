@@ -1156,7 +1156,7 @@ function setMode(m){
   if(hints[m])toast(hints[m]);
 }
 function renderMeasure(){
-  const el=document.getElementById("measure");
+  const el=document.getElementById("measure");el.style.bottom="";el.style.flexWrap="";el.style.justifyContent="";
   if(S.mode==="ruler"&&S.ruler.length===2){const d=dist(...S.ruler),b=bearing(...S.ruler);
     el.innerHTML=`<div class="chip" style="font-size:14px">${fmtDist(d)} · <b>${Math.round(b)}°</b> ${compass(b)} · ~${Math.max(1,Math.round(d/1000/5.4*60))} min run</div><button class="btn" id="mClr">Clear</button>`;el.hidden=false;
     el.querySelector("#mClr").onclick=()=>{S.ruler=[];renderMeasure();dirty()};}
@@ -1164,8 +1164,8 @@ function renderMeasure(){
     el.innerHTML=`<div class="chip" style="font-size:14px">${S.draft.length} pts · <b>${fmtDist(pathLen(S.draft))}</b></div><button class="btn" id="rUndo">Undo</button><button class="btn pri" id="rSave">Save</button>`;el.hidden=false;
     el.querySelector("#rUndo").onclick=()=>{S.draft.pop();renderMeasure();dirty()};
     el.querySelector("#rSave").onclick=saveRouteSheet;}
-  else if(S.mode==="route"&&!S.draft.length){el.innerHTML=`<button class="btn pri" id="mLR">🧭 Loot run</button><button class="btn" id="mRT">📂 Saved routes</button>`;el.hidden=false;
-    el.querySelector("#mLR").onclick=()=>lootRunSheet();el.querySelector("#mRT").onclick=routesSheet}
+  else if(S.mode==="route"&&!S.draft.length){const cur=S.nav&&S.nav.stops&&S.nav.stops.length;const lr=ls.get("lastRun",null);el.innerHTML=`<button class="btn pri" id="mLR">🧭 Loot run</button>${lr?`<button class="btn pri" id="mSR">🔁 Same run from here</button>`:""}${cur?`<button class="btn" id="mSV">💾 Save</button>`:""}<button class="btn" id="mRT">📂 Saved</button>`;el.hidden=false;el.style.flexWrap="wrap";el.style.justifyContent="center";if(!navEl.hidden)el.style.bottom=(64+navEl.offsetHeight+8)+"px";
+    el.querySelector("#mLR").onclick=()=>lootRunSheet();const sr=el.querySelector("#mSR");if(sr)sr.onclick=sameRun;el.querySelector("#mRT").onclick=routesSheet;const sv=el.querySelector("#mSV");if(sv)sv.onclick=()=>saveRunSheet(S.nav.run||S.nav.name,S.nav.stops)}
   else if(S.movePin){el.innerHTML=`<div class="chip" style="font-size:14px">Tap the new spot</div><button class="btn" id="mvX">Cancel</button>`;el.hidden=false;el.querySelector("#mvX").onclick=()=>{S.movePin=null;renderMeasure()}}
   else if(S.mode==="ping"){
     el.innerHTML=`<div class="emobar" role="radiogroup" aria-label="Ping emoji">${EMOJI.map(([e,n])=>`<button type="button" data-e="${e}" aria-label="${n}" aria-pressed="${e===S.emo}" title="${n}">${e}</button>`).join("")}</div>`;el.hidden=false;
@@ -1230,7 +1230,7 @@ const canEditRoute=r=>ownMark(r)||isAdmin();
 function routeSheet(r){const mine=canEditRoute(r);let col=safeColor(r.color||COLORS[0]);
   openSheet(r.name||"Route",`
     <div class="meta">${r.stops?r.stops.length+" STOPS":r.pts.length+" WAYPOINTS"} · ${fmtDist(pathLen(r.pts))}${r.byName?` · by ${esc(r.byName)}`:""}${r.at?` · ${ago(r.at)}`:""} · ${visLabel(r.vis).toUpperCase()}</div>
-    ${r.stops&&r.stops.length?`<button class="btn pri" id="rtRun">▶ Run it again from where I'm at</button>`:""}
+    ${r.stops&&r.stops.length?`<button class="btn pri" id="rtRun">▶ Start this run (directions from where I'm at)</button>`:""}
     ${mine?`<label class="f">Route name<input type="text" id="rtName" maxlength="30" value="${esc(r.name||"")}"></label>
     <div class="row" id="rtCols">${COLORS.map((c,i)=>`<button class="ibtn" data-c="${c}" aria-label="Color ${i+1}" style="background:${c};width:38px;${c===col?"outline:2px solid #fff":""}"></button>`).join("")}</div>
     ${visHtml(r.vis,"rtV")}
@@ -1241,7 +1241,7 @@ function routeSheet(r){const mine=canEditRoute(r);let col=safeColor(r.color||COL
     const rr=el.querySelector("#rtRun");if(rr)rr.onclick=()=>{const from=S.myPos||r.stops[0];const st=chainStops(r.stops.map(s=>({...s})),from,r.stops.length);
       if(!S.myPos)setMyPos(from[0]||from.x,from[1]||from.y,true);const last=st[st.length-1];S.nav={x:last.x,y:last.y,name:last.n,stops:st,run:r.name};ls.set("nav",S.nav);S.route=multiRoute(S.myPos,st);S.step=0;closeSheet();updateNav();speakStep(true);dirty()};
     if(mine)visWire(el,"rtV");
-    el.querySelector("#rtFit").onclick=()=>{closeSheet();const xs=r.pts.map(p=>p[0]),ys=r.pts.map(p=>p[1]);const span=Math.max(Math.max(...xs)-Math.min(...xs),Math.max(...ys)-Math.min(...ys),400);
+    el.querySelector("#rtFit").onclick=()=>{S.focusRoute={id:r.id,t:Date.now()};if(r.stops)S.hl=r.stops.filter(s=>isFinite(s.bi)).map(s=>s.bi);S.anim=true;closeSheet();const xs=r.pts.map(p=>p[0]),ys=r.pts.map(p=>p[1]);const span=Math.max(Math.max(...xs)-Math.min(...xs),Math.max(...ys)-Math.min(...ys),400);
       centerOn((Math.max(...xs)+Math.min(...xs))/2,(Math.max(...ys)+Math.min(...ys))/2,Math.min(.5,Math.min(cv.clientWidth,cv.clientHeight)*.8/span));updateCoords()};
     if(!mine)return;
     el.querySelector("#rtCols").onclick=e=>{const b=e.target.closest("button");if(!b)return;col=b.dataset.c;el.querySelectorAll("#rtCols button").forEach(x=>x.style.outline=x===b?"2px solid #fff":"none")};
@@ -1389,6 +1389,7 @@ const ES_PAIRS=[
  ["Direction sign","Se\u00f1al de direcci\u00f3n"],
  ["on the dirt track","por el camino de tierra"],
  ["follow the dirt track","sigue el camino de tierra"],
+ ["\ud83d\udd01 Same run from here","\ud83d\udd01 La misma ruta desde aqu\u00ed"],
  ["Pings, signs and new pins from the last 48 hours. Tap a line to see it on the map.","Avisos, señales y marcadores nuevos de las últimas 48 horas. Toca una línea para verla en el mapa."],
  ["Phones buzz when the map is open. Anyone who has it closed sees it the next time they open it.","Los teléfonos vibran si el mapa está abierto. Quien lo tenga cerrado lo verá al abrirlo."],
  ["They'll ask to join and you let them in from the shield button.","Pedirán entrar y tú los dejas pasar con el botón del escudo."],
@@ -1793,6 +1794,7 @@ function saveRouteSheet(){
     <div class="meta">${S.draft.length} waypoints · ${fmtDist(pathLen(S.draft))}</div>
     <label class="f">Route name<input type="text" id="rName" maxlength="30" placeholder="e.g. Water run north" value="${ed?esc(ed.name||""):""}"></label>
     <div class="row" id="rCols">${COLORS.map((c,i)=>`<button class="ibtn" data-c="${c}" aria-label="Color ${i+1}" aria-pressed="${c===col}" style="background:${c};width:38px;${c===col?"outline:2px solid #fff":""}"></button>`).join("")}</div>
+    ${pathLen(S.draft)<40?`<p class="note" style="margin:0;color:var(--gold)">This route is only ${fmtDist(pathLen(S.draft))} long. To save a loot run, use 💾 Save this run instead.</p>`:""}
     ${visHtml(ed?ed.vis:VIS_PRIVATE,"rV")}
     <div class="row"><button class="btn pri grow" id="rOk">${ed?"Save changes":"Save route"}</button><button class="btn dng" id="rDiscard">${ed?"Cancel edit":"Discard"}</button></div>`,
   el=>{
@@ -2514,7 +2516,8 @@ function startMulti(text){const body=String(text).toLowerCase().replace(/^(pleas
   V.s=Math.max(minS(),Math.min(.3,Math.min(W,H)*.7/span));centerOn((Math.max(...xs)+Math.min(...xs))/2,(Math.max(...ys)+Math.min(...ys))/2);updateCoords();dirty();
   toast(`${plan.stops.length} stops · ${fmtDist(S.route?S.route.total:plan.tot)}`);
   const g=S.route&&gasOnRoute(S.route.pts);
-  say(`Route with ${plan.stops.length} stops. First stop: ${plan.stops[0].n}. `+(g?"Warning, it passes a gas zone. ":"")+spokenStep(0));return true}
+  say(`Route with ${plan.stops.length} stops. First stop: ${plan.stops[0].n}. `+(g?"Warning, it passes a gas zone. ":"")+spokenStep(0));
+  {const lab=tgs.map(t=>t.label).join(" + ").slice(0,40);S.nav.run=lab;ls.set("nav",S.nav);ls.set("lastRun",{cmd:text,label:lab});runDoneSheet(lab,plan.stops,!!g)}return true}
 
 /* ---------- landmarks for spoken directions ---------- */
 function landmarkAt(pt,prevBrg,r){let best=null,bs=0;for(const i of lootNear(pt[0],pt[1],r||70)){const c=lcls(i),sc=c[5];if(sc<5)continue;const d=Math.hypot(LB[i*4]-pt[0],LB[i*4+1]-pt[1]),v=sc*10-d/10;if(v>bs){bs=v;best=i}}
@@ -2755,6 +2758,7 @@ function runCommand(raw){const s=normQ(String(raw||"").replace(/[?!.,]+$/,"")).t
   if(/^(heli )?crash( spotted| here)?$|^heli( here)?$/.test(s)){if(!S.myPos){toast("Set where you are first");return true}crashPick(S.myPos[0],S.myPos[1]);return true}
   if(/^(servers?|change server|switch server)$/.test(s)){serverSheet();return true}
   if(/^loot run$|^(build|make|plan)( me)?( a)? loot run$/.test(s)){lootRunSheet();return true}
+  if(/^(same|repeat)( (loot )?run)?( again)?( from here)?$|^(do|run) (it|that) again$|^same again$/.test(s)){sameRun();return true}
   if(/^(add|put)( a)? need (for )?/.test(s)){const q=s.replace(/^(add|put)( a)? need (for )?/,"");askItem(q,g=>{closeSheet();addNeed(g)});return true}
   if(/\b(route|loot run|run)\b/.test(s)&&(/\d+\s*stops?/.test(s)||/\bloot run\b/.test(s)||!/,|\band\b|\bthen\b|\bthrough\b/.test(s))&&voiceRun(s))return true;
   // multi-stop routes and loot runs
@@ -3130,6 +3134,7 @@ function saveRunSheet(label,stops){const pts=S.route?simplify(S.route.pts,30).ma
     if(S.db){try{await S.db.collection("routes").add(data)}catch(e){writeFail(e)}}else{const id="r"+Date.now();S.routes.set(id,{id,...data});persistLocal()}closeSheet();toast(`Saved · ${visLabel(data.vis)}`);dirty()}})}
 function lootRunSheet(pre){pre=pre||{};const sel=new Set(pre.cats||[]);const items=[...(pre.items||[])];let n=pre.n||5,from="me",needs=false;
   const render=()=>openSheet("🧭 Loot run",`
+    ${ls.get("lastRun",null)&&!pre.cats&&!pre.items?`<button class="btn pri" id="lrSame">🔁 Same run from here<br><span class="meta" style="color:inherit">${esc(lastRunLabel())}</span></button>`:""}
     <div class="sec">What are you after?</div>
     <div class="gchips" id="lrC">${RUNCATS.map(c=>`<button type="button" data-c="${c.k}" aria-pressed="${sel.has(c.k)}"><span style="font-size:16px">${c.e}</span>${c.n}</button>`).join("")}</div>
     <div class="row" style="flex-wrap:nowrap"><input type="search" id="lrQ" placeholder="Or an item: 762x39, bandages, car battery" style="flex:1;min-width:0"><button class="btn" id="lrAdd">Add</button></div>
@@ -3141,7 +3146,8 @@ function lootRunSheet(pre){pre=pre||{};const sel=new Set(pre.cats||[]);const ite
     <div class="gchips" id="lrF">${[["me",S.myPos?"📍 Where I'm at":"📍 Where I'm at (not set)"],["center","⌖ Map center"],["tap","👆 Tap on the map"]].map(([k,l])=>`<button type="button" data-f="${k}" aria-pressed="${from===k}">${l}</button>`).join("")}</div>
     <button class="btn pri" id="lrGo">Build route</button>
     <p class="note" style="margin:0">Each next stop is the closest one to the stop before. Buildings marked looted in the last hour are skipped. Spots in gas zones are included and marked ☣️.</p>`,
-  el=>{el.querySelector("#lrC").onclick=e=>{const b=e.target.closest("[data-c]");if(!b)return;sel.has(b.dataset.c)?sel.delete(b.dataset.c):sel.add(b.dataset.c);b.setAttribute("aria-pressed",String(sel.has(b.dataset.c)))};
+  el=>{const ss=el.querySelector("#lrSame");if(ss){ss.style.height="auto";ss.style.padding="8px";ss.onclick=sameRun}
+    el.querySelector("#lrC").onclick=e=>{const b=e.target.closest("[data-c]");if(!b)return;sel.has(b.dataset.c)?sel.delete(b.dataset.c):sel.add(b.dataset.c);b.setAttribute("aria-pressed",String(sel.has(b.dataset.c)))};
     el.querySelector("#lrI").onclick=e=>{const b=e.target.closest("[data-ri]");if(!b)return;items.splice(+b.dataset.ri,1);render()};
     const q=el.querySelector("#lrQ");const add=()=>{const v=q.value.trim();if(!v)return;askItem(v,g=>{items.push(g);render()})};
     el.querySelector("#lrAdd").onclick=add;q.addEventListener("keydown",e=>{if(e.key==="Enter"){e.preventDefault();add()}});micFor(q);
@@ -3153,6 +3159,7 @@ function lootRunSheet(pre){pre=pre||{};const sel=new Set(pre.cats||[]);const ite
       if(needs)activeNeeds().forEach(d=>{const it=LITEMS.find(x=>x.n===d.item);if(it)picked.push({n:"Need: "+it.d,its:[it]})});
       if(!picked.length){toast("Pick what you're looking for");return}
       const label=picked.map(t=>t.n).join(", ").slice(0,40);
+      ls.set("lastRun",{cats:[...sel],items:items.map(g=>({label:g.label,names:g.its.map(i=>i.n)})),n,needs,label});
       const go=st=>{closeSheet();setTimeout(()=>buildRun(picked,n,st,label),50)};
       if(from==="me"){if(!S.myPos){toast("Set where you are first, or pick Map center / Tap on the map");return}go(S.myPos)}
       else if(from==="center"){const[x,y]=toW(W/2,H/2);go([clampW(x),clampW(y)])}
@@ -3163,7 +3170,7 @@ function voiceRun(s){const mN=s.match(/(\d+)\s*stops?/);const n=mN?Math.min(50,+
   let body=s.replace(/(\d+)\s*stops?/,"").replace(/^(please\s+)?(build|make|plan|give)( me)?( a| an)?\s*/,"").replace(/\b(loot run|route|run)\b/g," ").replace(/^\s*(of|for|with|to|:)\s+/,"").replace(/\s+(of|for|with)\s+/g," ").replace(/[,]+$/,"").trim();
   if(!body)return false;
   const cat=RUNCATS.find(c=>new RegExp(`^${c.k}s?$|^${c.n.toLowerCase()}$`).test(body))||(/^(meds?|medic|hospital)$/.test(body)?RUNCATS.find(c=>c.k==="medical"):/^(army|military)$/.test(body)?RUNCATS.find(c=>c.k==="military"):/^(cops?|police)$/.test(body)?RUNCATS.find(c=>c.k==="police"):/^figs?$/.test(body)?RUNCATS.find(c=>c.k==="figs"):null);
-  const go=t=>{if(!S.myPos){lootRunSheet(t.cat?{cats:[t.cat.k],n}:{items:[t.g],n});toast("Set where you are, or pick a start");return}buildRun([t.cat?t.cat:{n:t.g.label,its:t.g.its}],n,S.myPos,t.cat?t.cat.n:t.g.label)};
+  const go=t=>{ls.set("lastRun",t.cat?{cats:[t.cat.k],items:[],n,label:t.cat.n}:{cats:[],items:[{label:t.g.label,names:t.g.its.map(i=>i.n)}],n,label:t.g.label});if(!S.myPos){lootRunSheet(t.cat?{cats:[t.cat.k],n}:{items:[t.g],n});toast("Set where you are, or pick a start");return}buildRun([t.cat?t.cat:{n:t.g.label,its:t.g.its}],n,S.myPos,t.cat?t.cat.n:t.g.label)};
   if(cat){closeSheet();go({cat});return true}
   const o=itemChoices(body);if(!o.length)return false;closeSheet();
   if(sure(o))go({g:o[0]});else choiceSheet(`"${body.slice(0,24)}"`,o,g=>go({g}));return true}
@@ -3224,6 +3231,14 @@ function fpDist(a,b){if(!a||!b||a.length!==b.length)return 1e9;let d=0;for(let i
 const FP_OK=22;   // average difference per value (0-255) that still counts as the same scene
 function matchSignPhoto(fp){const a=unb(fp);let best=null,bd=1e9;for(const p of X33.raw.spics.values()){const d=fpDist(a,unb(p.f));if(d<bd){bd=d;best=p}}
   const s=best&&X33.raw.signs.get(best.sign);return s&&bd<=FP_OK?{x:s.x,y:s.y,id:best.sign,d:bd,text:s.text}:null}
+
+// 🔁 the last loot run you built, rebuilt from where you are now
+function sameRun(){const L=ls.get("lastRun",null);if(!L){toast("Build a loot run first");return}if(L.cmd){closeSheet();startMulti(L.cmd);return}
+  if(!S.myPos){toast("Set where you are first (I'm here or a sign picture)");return}
+  const picked=RUNCATS.filter(c=>(L.cats||[]).includes(c.k)).concat((L.items||[]).map(g=>({n:g.label,its:g.names.map(k=>LITEMS.find(x=>x.n===k)).filter(Boolean)})).filter(t=>t.its.length));
+  if(L.needs)activeNeeds().forEach(d=>{const it=LITEMS.find(x=>x.n===d.item);if(it)picked.push({n:"Need: "+it.d,its:[it]})});
+  if(!picked.length){toast("Build a loot run first");return}closeSheet();buildRun(picked,L.n||5,S.myPos,L.label||picked.map(t=>t.n).join(", ").slice(0,40))}
+const lastRunLabel=()=>{const L=ls.get("lastRun",null);return L?`${L.label||"last run"}${L.n?" · "+L.n+" stops":""}`:""};
 /* ---------- two-arrow direction signs: find the junction that fits the distances ---------- */
 function roadArms(cx,cy){if(!RG)return 0;const N=RN,R=3;let runs=0,prev=null,first=null;
   for(let k=0;k<20;k++){const a=k/20*Math.PI*2,x=Math.round(cx+Math.cos(a)*R),y=Math.round(cy+Math.sin(a)*R);const v=x>=0&&y>=0&&x<N&&y<N?RG[y*N+x]:0;if(first===null)first=v;if(prev!==null&&v&&!prev)runs++;prev=v}
@@ -3475,6 +3490,11 @@ function drawV33(now){const[wx0,wy0]=toW(-30,-30),[wx1,wy1]=toW(W+30,H+30),inV=(
   let an=false;liveCrash().forEach(c=>{const[sx,sy]=toS(c.x,c.y),ph=(now/1000)%1;an=true;ctx.beginPath();ctx.arc(sx,sy,14+ph*26,0,7);ctx.strokeStyle="#ff6a1f";ctx.globalAlpha=1-ph;ctx.lineWidth=3;ctx.stroke();ctx.globalAlpha=1;
     ctx.beginPath();ctx.arc(sx,sy,15,0,7);ctx.fillStyle="rgba(20,16,12,.9)";ctx.fill();ctx.lineWidth=2.5;ctx.strokeStyle="#ff6a1f";ctx.stroke();ctx.font="17px 'Noto Color Emoji',sans-serif";ctx.fillText((CRASHK[c.k]||CRASHK.heli)[1],sx,sy+1);ctx.font="12px 'Noto Color Emoji',sans-serif";ctx.fillText("🔥",sx+11,sy-11);
     label(`${(CRASHK[c.k]||CRASHK.heli)[0]} · ${Math.max(1,Math.round((CRASH_MS-(Date.now()-c.at))/MIN))} min left`,sx,sy+26,"#ffcf9a")});
+  // a saved route someone just tapped "Show" on: thick, glowing, stops numbered (for 30 seconds)
+  if(S.focusRoute&&Date.now()-S.focusRoute.t<30000){const r=S.routes.get(S.focusRoute.id);if(r){an=true;const pulse=.6+.4*Math.sin(now/250);
+    line(r.pts,12,"rgba(255,255,255,"+(.35*pulse).toFixed(2)+")");line(r.pts,6,"rgba(20,16,12,.8)");line(r.pts,4,safeColor(r.color));
+    (r.stops||[]).forEach((st,i)=>{const[sx,sy]=toS(st.x,st.y);ctx.beginPath();ctx.arc(sx,sy,11,0,7);ctx.fillStyle="#ffe08a";ctx.fill();ctx.lineWidth=2;ctx.strokeStyle="#1b1610";ctx.stroke();ctx.font="700 11px 'IBM Plex Mono',monospace";ctx.fillStyle="#1b1610";ctx.fillText(i+1,sx,sy+.5)});
+    const[sx,sy]=toS(...r.pts[0]);label("▶ start · "+r.name,sx,sy-18,"#fff")}}else if(S.focusRoute)S.focusRoute=null;
   // landmark lines + "about here" circle
   if(S.lmViz){const v=S.lmViz;v.lines.forEach(L=>{const far=[L.x+L.ux*20000,L.y+L.uy*20000];line([[L.x,L.y],far],2.5,"#e6b24f",[9,6]);const[sx,sy]=toS(L.x,L.y);label(`${L.l.p.n} (${L.l.d})`,sx,sy-14,"#e6b24f")});
     const[sx,sy]=toS(v.x,v.y);ctx.beginPath();ctx.arc(sx,sy,Math.max(10,v.r*V.s),0,7);ctx.fillStyle="rgba(63,184,168,.22)";ctx.fill();ctx.save();ctx.setLineDash([6,4]);ctx.lineWidth=2.5;ctx.strokeStyle="#3fb8a8";ctx.stroke();ctx.restore();ctx.beginPath();ctx.arc(sx,sy,5,0,7);ctx.fillStyle="#3fb8a8";ctx.fill()}
