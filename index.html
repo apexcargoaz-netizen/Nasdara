@@ -859,7 +859,7 @@ function draw(now){
       ctx.fillStyle="rgba(27,22,16,.86)";ctx.beginPath();if(ctx.roundRect)ctx.roundRect(lx,y,w,h,5);else ctx.rect(lx,y,w,h);ctx.fill();
       ctx.strokeStyle="rgba(230,178,79,.55)";ctx.lineWidth=1;ctx.stroke();
       ctx.fillStyle="#f4ead6";ctx.textAlign="left";ctx.textBaseline="middle";ctx.fillText(t,lx+5,y+h/2+1)};
-    const topY=Math.max(4,y0+4),botY=Math.min(H-24,y0+sz-22),leftX=Math.max(4,x0+4);
+    const topY=Math.max(4+(window.__hudB||0),y0+4),botY=Math.min(H-24,y0+sz-22),leftX=Math.max(4,x0+4);
     for(let k=0;k*1000<=WORLD;k++){const[sx]=toS(k*1000,0),[,sy]=toS(0,k*1000);const lab=String(k*10).padStart(3,"0");
       if(k%cs===0&&sx>22&&sx<W-22){tag(lab,sx,topY,"c");if(botY>topY+60)tag(lab,sx,botY,"c")}
       if(k%rs===0&&sy>topY+26&&sy<Math.min(H-34,botY-14))tag(lab,leftX,sy-9)}
@@ -1426,6 +1426,7 @@ const ES_PAIRS=[
  ["Guide me", "Gu\u00edame"],
  ["Pin here", "Marcar aqu\u00ed"],
  ["Landmark you can see far off", "Punto de referencia visible de lejos"],
+ ["Shipping containers & boat wrecks", "Contenedores y barcos naufragados"],
  ["Pings, signs and new pins from the last 48 hours. Tap a line to see it on the map.","Avisos, señales y marcadores nuevos de las últimas 48 horas. Toca una línea para verla en el mapa."],
  ["Phones buzz when the map is open. Anyone who has it closed sees it the next time they open it.","Los teléfonos vibran si el mapa está abierto. Quien lo tenga cerrado lo verá al abrirlo."],
  ["They'll ask to join and you let them in from the shield button.","Pedirán entrar y tú los dejas pasar con el botón del escudo."],
@@ -3789,6 +3790,32 @@ function lmNearOpts(s){const q=norm(s);if(q.length<3)return[];const ref=S.myPos|
   Object.entries(LMK).forEach(([k,[e,n]])=>{if(!(norm(k).includes(q)||norm(n).includes(q)||q.includes(norm(k))))return;
     LMI.filter(i=>lcls(i)[0]===k).map(i=>({x:LB[i*4],y:LB[i*4+1]})).sort((a,b)=>dist(ref,[a.x,a.y])-dist(ref,[b.x,b.y])).slice(0,3)
       .forEach(p=>{const np=nearestPlace([p.x,p.y]);out.push({n:`${e} ${k.charAt(0).toUpperCase()+k.slice(1)} near ${np?np.n:"here"}`,x:p.x,y:p.y,k:"lm34"})})});return out}
+// Nasdara has no sea: the "coast" loot group is shipping containers plus 3 boat wrecks
+LCAT.forEach(c=>{if(c.k==="coast"){c.n="Shipping containers & boat wrecks";c.e="🚢"}});
+/* ---------- v3.4: top box (coordinates, map views, status chips in one box) so the grid numbers stay visible ---------- */
+(function(){const hud=document.getElementById("hud"),views=document.getElementById("views"),coords=document.getElementById("coords"),zoom=document.getElementById("zoom"),stage=document.getElementById("stage");
+  const st=document.createElement("style");st.textContent=`
+#hud.tbox{left:max(8px,env(safe-area-inset-left,0px));right:max(8px,env(safe-area-inset-right,0px));top:6px;gap:5px;padding:6px;background:rgba(27,22,16,.9);border:1px solid var(--line);border-radius:12px;pointer-events:auto;backdrop-filter:blur(4px);z-index:5}
+#hud.tbox .tb1{display:flex;align-items:center;gap:6px;min-width:0}
+#hud.tbox .tb2{display:flex;gap:5px;overflow-x:auto;scrollbar-width:none;white-space:nowrap}
+#hud.tbox .tb2::-webkit-scrollbar{display:none}
+#hud.tbox .tb2>*{flex:none;align-self:center!important;padding:3px 8px;font-size:12px}
+#hud.tbox #coords{flex:1 1 auto;min-width:0;border:0;background:transparent;padding:0 2px 0 4px;backdrop-filter:none}
+#hud.tbox #views{position:static;display:flex;gap:3px;margin-left:auto}
+#hud.tbox #views .ibtn{width:40px;min-width:40px;height:40px}
+#hud.tbox #views .ibtn small{font-size:8px}
+@media (max-width:360px){#hud.tbox #views .ibtn small{display:none}#hud.tbox #views .ibtn{width:34px;min-width:34px;height:34px}}`;document.head.appendChild(st);
+  hud.classList.add("tbox");const r1=document.createElement("div"),r2=document.createElement("div");r1.className="tb1";r2.className="tb2";
+  const rest=[...hud.children].filter(c=>c!==coords);hud.innerHTML="";r1.appendChild(coords);r1.appendChild(views);hud.appendChild(r1);hud.appendChild(r2);rest.forEach(c=>r2.appendChild(c));
+  new MutationObserver(()=>[...hud.children].forEach(c=>{if(c!==r1&&c!==r2)r2.appendChild(c)})).observe(hud,{childList:true});
+  // the grid numbers sit in a strip right under the box; zoom buttons go under that strip
+  const lay=()=>{const b=hud.offsetTop+hud.offsetHeight;window.__hudB=b+2;zoom.style.top=(b+30)+"px";const fab=document.getElementById("bCam");if(fab)fab.style.top=(b+30+zoom.offsetHeight+10)+"px";dirty()};
+  new ResizeObserver(lay).observe(hud);addEventListener("resize",lay);setTimeout(lay,0);
+  // keep the route buttons above the navigation box when that box changes height
+  const nav=document.getElementById("navbar"),ms=document.getElementById("measure");
+  new ResizeObserver(()=>{if(!ms.hidden&&ms.querySelector("#mLR")&&!nav.hidden)ms.style.bottom=(64+nav.offsetHeight+8)+"px"}).observe(nav);
+  new MutationObserver(()=>{if(!ms.hidden&&ms.querySelector("#mLR"))ms.style.bottom=nav.hidden?"":(64+nav.offsetHeight+8)+"px"}).observe(nav,{attributes:true,attributeFilter:["hidden"]});
+})();
 
 function findItems(q){const s=normQ(q);let r=findItems_(s);if(!r.length&&/s$/.test(s))r=findItems_(s.replace(/(es|s)$/,""));const g=itemGroup(q);if(g){const set=new Set(g.its);r=[...g.its.slice(0,6),...r.filter(x=>!set.has(x))]}return r.slice(0,8)}
 
