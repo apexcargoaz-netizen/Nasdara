@@ -17,12 +17,21 @@ def detect(a):
     yel=u((R>225)&(G>185)&(B<175)&(R-B>60))
     mauve=u((R-B>=10)&(R-B<=38)&(R-G>=6)&(R-G<=30)&(G>=B-4)&(R>=165)&(R<=218))
     mauve=cv2.morphologyEx(cv2.morphologyEx(mauve,cv2.MORPH_CLOSE,E(3)),cv2.MORPH_OPEN,E(7))
-    bgrey=u(neu&(s>=3*90)&(s<=3*140)); bgrey=cv2.morphologyEx(bgrey,cv2.MORPH_OPEN,E(7))
+    bgrey=u(neu&(s>=3*90)&(s<=3*140)); bgrey=cv2.morphologyEx(bgrey,cv2.MORPH_OPEN,E(11))
     brown=u((R-B>=12)&(R-B<=45)&(R<=125)&(R>=45)&(G<=R)); brown=cv2.morphologyEx(brown,cv2.MORPH_OPEN,E(5))
     olive=u((R>=95)&(R<=175)&(G>=85)&(G<=160)&(B<=95)&(R-B>=40)&(abs(R-G)<=35))
     oliveF=cv2.morphologyEx(olive,cv2.MORPH_OPEN,E(9))     # tents/blocks
     black=u(s<=3*45); blackF=cv2.morphologyEx(black,cv2.MORPH_OPEN,E(9))
-    bld=bgrey|brown|oliveF|blackF
+    must=u((R-B>=60)&(R>=115)&(R<=185)&(G>=85)&(G<=150)&(B<=90)&(R>G))
+    must=cv2.morphologyEx(must,cv2.MORPH_CLOSE,E(7))
+    from scipy import ndimage as _ndi
+    must=u(_ndi.binary_fill_holes(must));must=cv2.morphologyEx(must,cv2.MORPH_OPEN,E(7))
+    ol_=u(s<3*95)
+    holes=u(_ndi.binary_fill_holes(ol_))&(1-ol_)
+    n_,l_,st_,_=cv2.connectedComponentsWithStats(holes,8)
+    rect_=(st_[:,4]>=20)&(st_[:,4]<=3000)&(st_[:,4]>=0.6*st_[:,2]*st_[:,3]);rect_[0]=False
+    boxes=cv2.dilate(rect_[l_].astype(np.uint8),E(3))
+    bld=bgrey|brown|oliveF|blackF|must|boxes
     # thin dark lines (fences + casings)
     bgm=cv2.medianBlur((s//3).astype(np.uint8),15).astype(np.int16)*3
     dk=u(neu&((s<3*175)|(s<bgm-55))); dk&=1-cv2.dilate(bld,E(3))
@@ -56,7 +65,7 @@ def detect(a):
     fence=((~isw)&straight&(wid<=1.9))[tlab].astype(np.uint8)&tl
     wthin=isw[tlab].astype(np.uint8)&tl
     # grey bead walls / rails (3-6px wide grey lines)
-    gl=u(neu&(s>=3*80)&(s<=3*165)); gl&=1-cv2.dilate(bld,E(3)); gl&=1-roadz; gl&=1-whz
+    gl=u(neu&(s>=3*80)&(s<=3*165)); gl&=1-cv2.dilate(bld,E(3)); gl&=1-roadz
     gl=gl&(1-cv2.morphologyEx(gl,cv2.MORPH_OPEN,E(8)))
     gl=cv2.morphologyEx(gl,cv2.MORPH_CLOSE,E(5))
     wallg,lab,keep=comps(gl,24,7)
@@ -64,6 +73,13 @@ def detect(a):
     ol=olive&(1-cv2.dilate(oliveF,E(9)))&(1-cv2.dilate(brown,E(7))); ol=cv2.morphologyEx(ol|cv2.morphologyEx(olive,cv2.MORPH_CLOSE,E(3))&(1-cv2.dilate(oliveF,E(3))),cv2.MORPH_CLOSE,E(3))
     wallo,_,_=comps(ol,20,9)
     walls=wallg|wallo|wthin
+    bd=u(neu&(s>=3*95)&(s<=3*200))&(1-cv2.dilate(bld,E(3)))&(1-roadz)
+    nb,lb,sb,_=cv2.connectedComponentsWithStats(bd,8)
+    dot=(sb[:,4]>=5)&(sb[:,4]<=70)&(np.maximum(sb[:,2],sb[:,3])<=12)&(sb[:,4]>=0.45*sb[:,2]*sb[:,3]);dot[0]=False
+    dm=dot[lb].astype(np.uint8)
+    ch=cv2.morphologyEx(dm,cv2.MORPH_CLOSE,E(11))
+    ch,_,_=comps(ch,40,8)
+    walls=walls|ch
     n,lab,st,_=cv2.connectedComponentsWithStats(walls,8)
     sk=skeletonize(walls>0);LL=np.bincount(lab[sk],minlength=n)
     big=np.maximum(st[:,2],st[:,3]);k=(big>=36)&~((big<80)&(LL>1.6*big));k[0]=False;walls=k[lab].astype(np.uint8)
