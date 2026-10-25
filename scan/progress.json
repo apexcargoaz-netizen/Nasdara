@@ -1,6 +1,6 @@
 {
  "zoom": "iZurvive z8 (4x), 1366x607 shots, 4 px per metre",
- "shots_done": 190,
+ "shots_done": 384,
  "total_estimate": 5200,
  "days": [
   {
@@ -20,25 +20,33 @@
    ],
    "shots": 190,
    "version": "3.9.5"
+  },
+  {
+   "day": 2,
+   "date": "2026-10-25",
+   "towns": [
+    "Anar J",
+    "Suvin Shahr",
+    "Gandomabad",
+    "Pesh Dasht",
+    "Bustanshahr",
+    "Chashme Sabz",
+    "Kucha Dar",
+    "Kati Golzar",
+    "Sabzabad",
+    "Varzaneh"
+   ],
+   "shots": 194,
+   "version": "3.9.9"
   }
  ],
  "next_towns": [
   "Nasdara",
   "Dashtabad",
-  "Suvin Shahr",
-  "Gandomabad",
-  "Pesh Dasht",
-  "Bustanshahr",
-  "Chashme Sabz",
-  "Kucha Dar",
-  "Kati Golzar",
-  "Sabzabad",
-  "Varzaneh",
   "Bad Asyab",
   "Khorramabad",
   "Salar Abad",
   "Wik Dakharti",
-  "Anar J",
   "Bazar-e Kohna",
   "Bagh-e Dara",
   "Sabz Pashan",
@@ -104,8 +112,7 @@
   "countryside_2x": "plan_country2x.json (z7, 2 px/m, 1375 shots)"
  },
  "day2": {
-  "queue": "q9.json (194 shots)",
-  "done": 19,
-  "stopped_at": "shot 19 of 194 (Anar Juy area)"
+  "done": 194,
+  "stopped_at": "complete"
  }
 }
