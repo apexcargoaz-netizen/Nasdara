@@ -97,5 +97,15 @@
   "Zulfiqar missile base",
   "Qalat-e Lut"
  ],
- "then": "countryside grid row by row after all towns"
+ "then": "countryside grid row by row after all towns",
+ "method": "v3.9.8: shots are stitched into map tiles (tiles/), iZurvive imagery used under their permitted-use terms, slightly recoloured",
+ "plan": {
+  "towns_4x": "plan_towns.json (z8, 4 px/m)",
+  "countryside_2x": "plan_country2x.json (z7, 2 px/m, 1375 shots)"
+ },
+ "day2": {
+  "queue": "q9.json (194 shots)",
+  "done": 19,
+  "stopped_at": "shot 19 of 194 (Anar Juy area)"
+ }
 }
