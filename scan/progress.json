@@ -1,6 +1,6 @@
 {
  "zoom": "iZurvive z8 (4x), 1366x607 shots, 4 px per metre",
- "shots_done": 384,
+ "shots_done": 442,
  "total_estimate": 5200,
  "days": [
   {
@@ -38,6 +38,18 @@
    ],
    "shots": 194,
    "version": "3.9.9"
+  },
+  {
+   "day": 3,
+   "date": "2026-10-26",
+   "towns": [
+    "Salar Abad",
+    "Wik Dakharti",
+    "Shinkalay"
+   ],
+   "shots": 58,
+   "version": "3.9.10",
+   "note": "partial day (usage limit)"
   }
  ],
  "next_towns": [
@@ -45,8 +57,6 @@
   "Dashtabad",
   "Bad Asyab",
   "Khorramabad",
-  "Salar Abad",
-  "Wik Dakharti",
   "Bazar-e Kohna",
   "Bagh-e Dara",
   "Sabz Pashan",
@@ -58,7 +68,6 @@
   "Dara-e Nur",
   "Marz-e Lut",
   "Bagh-e Mir",
-  "Shinkalay",
   "Tut Dara",
   "Payan Kalay",
   "Gul Zar",
