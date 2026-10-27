@@ -1,6 +1,6 @@
 {
  "zoom": "iZurvive z8 (4x), 1366x607 shots, 4 px per metre",
- "shots_done": 551,
+ "shots_done": 561,
  "total_estimate": 5200,
  "days": [
   {
@@ -77,6 +77,15 @@
    ],
    "shots": 15,
    "version": "3.9.14"
+  },
+  {
+   "day": 4,
+   "date": "2026-10-27",
+   "towns": [
+    "East of Khwakay (x5520-6203, y8800-9559)"
+   ],
+   "shots": 10,
+   "version": "3.9.15"
   }
  ],
  "next_towns": [
