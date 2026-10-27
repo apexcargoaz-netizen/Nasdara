@@ -1,6 +1,6 @@
 {
  "zoom": "iZurvive z8 (4x), 1366x607 shots, 4 px per metre",
- "shots_done": 442,
+ "shots_done": 457,
  "total_estimate": 5200,
  "days": [
   {
@@ -50,6 +50,15 @@
    "shots": 58,
    "version": "3.9.10",
    "note": "partial day (usage limit)"
+  },
+  {
+   "day": 3,
+   "date": "2026-10-26",
+   "towns": [
+    "Highway ridge between Bagh-e Mir and Qalat-e Bala (x5100-6124, y10400-11159)"
+   ],
+   "shots": 15,
+   "version": "3.9.11"
   }
  ],
  "next_towns": [
