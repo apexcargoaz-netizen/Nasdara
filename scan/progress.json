@@ -1,6 +1,6 @@
 {
  "zoom": "iZurvive z8 (4x), 1366x607 shots, 4 px per metre",
- "shots_done": 561,
+ "shots_done": 685,
  "total_estimate": 5200,
  "days": [
   {
@@ -86,23 +86,32 @@
    ],
    "shots": 10,
    "version": "3.9.15"
+  },
+  {
+   "day": 5,
+   "date": "2026-10-28",
+   "zoom": "2x (z7)",
+   "towns": [
+    "Dashtabad",
+    "Bad Asyab",
+    "Khorramabad",
+    "Bazar-e Kohna",
+    "Bagh-e Dara",
+    "Sabz Pashan",
+    "Bala Kalay",
+    "Bar Kalay",
+    "Darvazeh-e Gharb",
+    "Dahana",
+    "Tor Dara",
+    "Dara-e Nur",
+    "Marz-e Lut",
+    "Bagh-e Mir"
+   ],
+   "shots": 124,
+   "version": "3.11.1"
   }
  ],
  "next_towns": [
-  "Dashtabad",
-  "Bad Asyab",
-  "Khorramabad",
-  "Bazar-e Kohna",
-  "Bagh-e Dara",
-  "Sabz Pashan",
-  "Bala Kalay",
-  "Bar Kalay",
-  "Darvazeh-e Gharb",
-  "Dahana",
-  "Tor Dara",
-  "Dara-e Nur",
-  "Marz-e Lut",
-  "Bagh-e Mir",
   "Tut Dara",
   "Payan Kalay",
   "Gul Zar",
