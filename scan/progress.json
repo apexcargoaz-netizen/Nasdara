@@ -1,6 +1,6 @@
 {
  "zoom": "iZurvive z8 (4x), 1366x607 shots, 4 px per metre",
- "shots_done": 1208,
+ "shots_done": 1376,
  "total_estimate": 5200,
  "days": [
   {
@@ -180,6 +180,16 @@
    ],
    "shots": 289,
    "version": "3.11.4"
+  },
+  {
+   "day": 8,
+   "date": "2026-10-28",
+   "zoom": "2x (z7)",
+   "towns": [
+    "countryside rows y 0-2120 (top strip)"
+   ],
+   "shots": 168,
+   "version": "3.11.5"
   }
  ],
  "next_towns": [],
@@ -192,5 +202,11 @@
  "day2": {
   "done": 194,
   "stopped_at": "complete"
+ },
+ "country2x": {
+  "queue": "z7/q19.json",
+  "total": 1236,
+  "done": 168,
+  "next_index": 168
  }
 }
