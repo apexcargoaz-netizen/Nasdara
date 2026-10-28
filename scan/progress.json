@@ -1,6 +1,6 @@
 {
  "zoom": "iZurvive z8 (4x), 1366x607 shots, 4 px per metre",
- "shots_done": 689,
+ "shots_done": 919,
  "total_estimate": 5200,
  "days": [
   {
@@ -119,19 +119,28 @@
    ],
    "shots": 4,
    "version": "3.11.2"
+  },
+  {
+   "day": 6,
+   "date": "2026-10-28",
+   "zoom": "4x (z8)",
+   "towns": [
+    "Tut Dara",
+    "Gul Zar",
+    "Mian Deh",
+    "Panj Asyab",
+    "Pay-e Kuh",
+    "Dashtabad Airbase",
+    "Sar-e Deh",
+    "Zir Dara",
+    "Spinki",
+    "Manda Marz"
+   ],
+   "shots": 230,
+   "version": "3.11.3"
   }
  ],
  "next_towns": [
-  "Tut Dara",
-  "Gul Zar",
-  "Mian Deh",
-  "Panj Asyab",
-  "Pay-e Kuh",
-  "Dashtabad Airbase",
-  "Sar-e Deh",
-  "Zir Dara",
-  "Spinki",
-  "Manda Marz",
   "Mal Kalay",
   "Karizak",
   "Wacha Wadi",
