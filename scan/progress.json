@@ -1,6 +1,6 @@
 {
  "zoom": "iZurvive z8 (4x), 1366x607 shots, 4 px per metre",
- "shots_done": 1594,
+ "shots_done": 2789,
  "total_estimate": 5200,
  "days": [
   {
@@ -220,6 +220,17 @@
    ],
    "shots": 87,
    "version": "3.12.2"
+  },
+  {
+   "day": 11,
+   "date": "2026-10-29",
+   "zoom": "4x (z8) near roads and buildings, 2x (z7) open desert",
+   "towns": [
+    "rest of the map: 1195 shots at 4x around roads/buildings, 689 at 2x for empty desert"
+   ],
+   "shots": 1884,
+   "version": "3.12.5",
+   "note": "2 shots had an iZurvive.com watermark baked in; painted out"
   }
  ],
  "next_towns": [],
@@ -237,7 +248,8 @@
   "queue": "z7/q19.json",
   "total": 1236,
   "done": 286,
-  "next_index": 286
+  "next_index": 286,
+  "note": "finished 2026-10-29 (z7/q22, 689 shots)"
  },
  "missed_villages": [
   {
