@@ -2675,7 +2675,8 @@ document.addEventListener("visibilitychange",syncWake);
 
 /* ---------- home screen app (website only) ---------- */
 let installEv=null;window.addEventListener("beforeinstallprompt",e=>{e.preventDefault();installEv=e});
-if(siteLink()&&"serviceWorker" in navigator)try{navigator.serviceWorker.register("sw.js").catch(()=>{})}catch{}
+if(siteLink()&&"serviceWorker" in navigator)try{navigator.serviceWorker.register("sw.js").catch(()=>{});
+  navigator.serviceWorker.addEventListener("message",e=>{if(e.data&&e.data.t==="sw-updated"&&!sessionStorage.getItem("swReloaded")){try{sessionStorage.setItem("swReloaded","1")}catch{}location.reload()}});}catch{}
 const isApp=()=>{try{return matchMedia("(display-mode: standalone)").matches||navigator.standalone===true}catch{return false}};
 async function installApp(){if(installEv){installEv.prompt();try{await installEv.userChoice}catch{}installEv=null;return}
   toast(/iPhone|iPad/.test(navigator.userAgent)?"Tap Share, then Add to Home Screen":"Tap ⋮ in Chrome, then Add to Home screen (or Install app)")}
@@ -2917,7 +2918,7 @@ function navNext(){if(!S.route){toast("No route yet");return}const steps=S.route
 function navBack(){if(!S.route||S.step<=0)return;S.step--;const l=S.route.steps[S.step];setEstPos(S.route.pts[l.a]);focusStep();updateNav();speakStep()}
 
 /* ---------- version + "new version ready" ---------- */
-const APP_VERSION="3.13.4";
+const APP_VERSION="3.13.5";
 document.getElementById("verTag").textContent="v"+APP_VERSION;
 const vNum=v=>String(v).split(".").map(n=>+n||0),newer=(a,b)=>{const x=vNum(a),y=vNum(b);for(let i=0;i<Math.max(x.length,y.length);i++){if((x[i]||0)!==(y[i]||0))return(x[i]||0)>(y[i]||0)}return false};
 async function checkUpdate(){if(!siteLink())return;

@@ -241,8 +241,8 @@
   {
    "day": 13,
    "date": "2026-11-06",
-   "work": "3D ground now uses the sharp detailed map tiles (same as the flat Map) via the drape, instead of one low-res whole-map image. Roads, vegetation and field lines are crisp near the camera.",
-   "version": "3.13.4"
+   "work": "3D ground now uses the sharp detailed map tiles (same as the flat Map) via the drape, instead of one low-res whole-map image. Roads, vegetation and field lines are crisp near the camera. Also fixed the service worker so new versions always reach phones (was serving a cached copy): app shell now fetched fresh (cache:reload), old caches purged on update, open tabs auto-reload onto the new version.",
+   "version": "3.13.5"
   }
  ],
  "next_towns": [],
