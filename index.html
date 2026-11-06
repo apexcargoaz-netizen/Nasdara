@@ -829,11 +829,11 @@ function draw(now){
   const [x0,y0]=toS(0,0),sz=WORLD*V.s;
   ctx.imageSmoothingEnabled=true;
   const baseImg=S.view==="sat"&&satImg?satImg:S.mapImg;
-  if(baseImg&&!S.drape){ctx.drawImage(baseImg,x0,y0,sz,sz);
-    if(S.view==="ug")drawUnder();
-    if(baseImg===S.mapImg&&S.view==="map"&&V.s>.11)paperBase(x0,y0,sz);
+  if(baseImg){ctx.drawImage(baseImg,x0,y0,sz,sz);   // v3.13.4: also runs for the 3D drape, so the 3D ground gets the sharp map tiles
+    if(S.view==="ug"&&!S.drape)drawUnder();
+    if(baseImg===S.mapImg&&S.view==="map"&&V.s>.11&&!S.drape)paperBase(x0,y0,sz);
     if(S.view==="map"&&!S.plan)try{drawTiles()}catch(e){}
-    if(S.plan&&S.view==="map"){ctx.fillStyle="#ebe7df";ctx.fillRect(x0,y0,sz,sz);}
+    if(S.plan&&S.view==="map"&&!S.drape){ctx.fillStyle="#ebe7df";ctx.fillRect(x0,y0,sz,sz);}
     if(false)DETAIL.forEach(d=>{if(!d.img)return;const[a,b]=toS(d.x0,d.y0),[c,e]=toS(d.x1,d.y1);if(c<0||e<0||a>W||b>H)return;ctx.drawImage(d.img,a,b,c-a,e-b)});}
   else if(terrain&&!S.drape){
     ctx.drawImage(terrain,x0,y0,sz,sz);
@@ -2917,7 +2917,7 @@ function navNext(){if(!S.route){toast("No route yet");return}const steps=S.route
 function navBack(){if(!S.route||S.step<=0)return;S.step--;const l=S.route.steps[S.step];setEstPos(S.route.pts[l.a]);focusStep();updateNav();speakStep()}
 
 /* ---------- version + "new version ready" ---------- */
-const APP_VERSION="3.13.3";
+const APP_VERSION="3.13.4";
 document.getElementById("verTag").textContent="v"+APP_VERSION;
 const vNum=v=>String(v).split(".").map(n=>+n||0),newer=(a,b)=>{const x=vNum(a),y=vNum(b);for(let i=0;i<Math.max(x.length,y.length);i++){if((x[i]||0)!==(y[i]||0))return(x[i]||0)>(y[i]||0)}return false};
 async function checkUpdate(){if(!siteLink())return;
@@ -4240,7 +4240,7 @@ function build3D(){const stage=document.getElementById("stage");
   function groundTex(){const src=S.view==="sat"&&satImg?satImg:S.mapImg;if(!src||src===gSrc)return;gSrc=src;const k=document.createElement("canvas");k.width=k.height=2048;k.getContext("2d").drawImage(src,0,0,2048,2048);
     gl.bindTexture(gl.TEXTURE_2D,gTex);gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,gl.RGBA,gl.UNSIGNED_BYTE,k);gl.generateMipmap(gl.TEXTURE_2D);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MIN_FILTER,gl.LINEAR_MIPMAP_LINEAR);req()}
   // render the flat map's overlays (pins, routes, loot, players, rings...) into a square around the camera target
-  function drape(){if(!S.is3d)return;const SZ=Math.min(2048,gl.getParameter(gl.MAX_TEXTURE_SIZE)>=2048&&Math.max(innerWidth,innerHeight)>900?2048:1536),R=Math.max(900,Math.min(WORLD*1.05,cam.dist*2.6));
+  function drape(){if(!S.is3d)return;const SZ=Math.min(2048,gl.getParameter(gl.MAX_TEXTURE_SIZE)>=2048&&Math.max(innerWidth,innerHeight)>900?2048:1536),R=Math.max(520,Math.min(WORLD*1.05,cam.dist*2.6));
     const cx=cam.tx,cy=cam.ty,sv={s:V.s,tx:V.tx,ty:V.ty},sW=W,sH=H,sD=DPR;inDrape=true;
     try{W=SZ;H=SZ;DPR=1;cv.width=SZ;cv.height=SZ;V.s=SZ/R;V.tx=SZ/2-cx*V.s;V.ty=SZ/2-cy*V.s;S.drape=true;draw(performance.now());
       gl.bindTexture(gl.TEXTURE_2D,dTex);gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,gl.RGBA,gl.UNSIGNED_BYTE,cv);dRect[0]=cx-R/2;dRect[1]=cy-R/2;dRect[2]=R}
@@ -4458,11 +4458,11 @@ fetch("tiles/index.json?vc="+Date.now()).then(r=>r.ok?r.json():null).then(j=>{if
 function tileImg(L,tx,ty){const k=L+"/"+tx+"_"+ty;let e=TL.cache.get(k);if(e){TL.cache.delete(k);TL.cache.set(k,e);return e.ok?e.im:null}
   const im=new Image();e={im,ok:false};im.onload=()=>{e.ok=true;dirty()};im.src="tiles/"+k+".webp?t="+TL.ver;TL.cache.set(k,e);
   if(TL.cache.size>600){const f=TL.cache.keys().next().value;TL.cache.delete(f)}return null}
-function drawTiles(){TL.on=false;if(!TL.idx||V.s<.1||S.drape)return;const need=V.s*DPR;let Lm=1;for(const L of [1,2,3,4]){Lm=L;if(TL.PXM[L]>=need*.75)break}
+function drawTiles(){TL.on=false;if(!TL.idx||V.s<.1)return;const need=V.s*DPR;let Lm=1;for(const L of [1,2,3,4]){Lm=L;if(TL.PXM[L]>=need*.75)break}
   const[wx0,wy0]=toW(0,0),[wx1,wy1]=toW(W,H);ctx.save();ctx.globalAlpha=Math.min(1,(V.s-.1)/.04);ctx.imageSmoothingEnabled=true;ctx.imageSmoothingQuality="high";
   for(let L=1;L<=Lm;L++){const m=256/TL.PXM[L],set=TL.idx[L];if(!set||!set.size)continue;const a0=Math.max(0,Math.floor(wx0/m)),a1=Math.floor(wx1/m),b0=Math.max(0,Math.floor(wy0/m)),b1=Math.floor(wy1/m);
     if((a1-a0+1)*(b1-b0+1)>900)continue;
-    for(let tx=a0;tx<=a1;tx++)for(let ty=b0;ty<=b1;ty++){if(!set.has(tx*10000+ty))continue;const im=tileImg(L,tx,ty);if(!im)continue;const[sx,sy]=toS(tx*m,ty*m),s=m*V.s;ctx.drawImage(im,Math.floor(sx),Math.floor(sy),Math.ceil(s+1),Math.ceil(s+1));TL.on=true}}
+    for(let tx=a0;tx<=a1;tx++)for(let ty=b0;ty<=b1;ty++){if(!set.has(tx*10000+ty))continue;const im=tileImg(L,tx,ty);if(!im)continue;const[sx,sy]=toS(tx*m,ty*m),s=m*V.s;ctx.drawImage(im,Math.floor(sx),Math.floor(sy),Math.ceil(s+1),Math.ceil(s+1));if(!S.drape)TL.on=true}}
   ctx.restore()}
 // where the detailed tiles show, our older hand-drawn roads/buildings are hidden so nothing doubles up
 function tileClip(){const f3=TL.full&&TL.full[3],f4=TL.full&&TL.full[4];if(!f3||!f4)return false;const[wx0,wy0]=toW(0,0),[wx1,wy1]=toW(W,H);

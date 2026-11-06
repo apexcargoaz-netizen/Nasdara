@@ -237,6 +237,12 @@
    "date": "2026-11-06",
    "work": "3D view overhaul: per-model height, roof shape and colour for all 13,717 buildings. Gabled roofs on houses/sheds, domes on mosques, round cylinders for silos/tanks/water towers/chimneys, tapered masts for towers. Richer, more distinct category colours.",
    "version": "3.13.3"
+  },
+  {
+   "day": 13,
+   "date": "2026-11-06",
+   "work": "3D ground now uses the sharp detailed map tiles (same as the flat Map) via the drape, instead of one low-res whole-map image. Roads, vegetation and field lines are crisp near the camera.",
+   "version": "3.13.4"
   }
  ],
  "next_towns": [],
