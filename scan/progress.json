@@ -235,8 +235,8 @@
   {
    "day": 12,
    "date": "2026-11-06",
-   "work": "3D view overhaul: every building gets real height + wall/roof colour from its matched iZurvive model. Houses/sheds get gabled roofs, mosques a dome, silos/tanks/water towers/chimneys are round cylinders, towers taper to a mast.",
-   "version": "3.13.2"
+   "work": "3D view overhaul: per-model height, roof shape and colour for all 13,717 buildings. Gabled roofs on houses/sheds, domes on mosques, round cylinders for silos/tanks/water towers/chimneys, tapered masts for towers. Richer, more distinct category colours.",
+   "version": "3.13.3"
   }
  ],
  "next_towns": [],

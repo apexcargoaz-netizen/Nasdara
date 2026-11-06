@@ -2917,7 +2917,7 @@ function navNext(){if(!S.route){toast("No route yet");return}const steps=S.route
 function navBack(){if(!S.route||S.step<=0)return;S.step--;const l=S.route.steps[S.step];setEstPos(S.route.pts[l.a]);focusStep();updateNav();speakStep()}
 
 /* ---------- version + "new version ready" ---------- */
-const APP_VERSION="3.13.2";
+const APP_VERSION="3.13.3";
 document.getElementById("verTag").textContent="v"+APP_VERSION;
 const vNum=v=>String(v).split(".").map(n=>+n||0),newer=(a,b)=>{const x=vNum(a),y=vNum(b);for(let i=0;i<Math.max(x.length,y.length);i++){if((x[i]||0)!==(y[i]||0))return(x[i]||0)>(y[i]||0)}return false};
 async function checkUpdate(){if(!siteLink())return;
@@ -4149,10 +4149,10 @@ function build3D(){const stage=document.getElementById("stage");
   const _model=(x,y)=>{const gx=(x/_JG)|0,gy=(y/_JG)|0;let bi=-1,bd=64;for(let a=-1;a<=1;a++)for(let cc=-1;cc<=1;cc++){const arr=_jbk.get((gx+a)*100003+(gy+cc));if(!arr)continue;for(const i of arr){const dx=LB[i*4]-x,dy=LB[i*4+1]-y,dd=dx*dx+dy*dy;if(dd<bd){bd=dd;bi=i}}}return bi>=0?opic(bi):null};
   // model name → [height(m), wallRGB, roofRGB]. keyword order matters: specific before generic.
   const b3cl=(nm,area)=>{const n=nm||"",dmg=/_dam/.test(n)?.85:1;
-    const tanW=[.82,.76,.63],terra=[.56,.32,.25],slumW=[.73,.6,.45],slumR=[.5,.42,.33],shedW=[.64,.6,.52],shedR=[.5,.52,.55],
-      conc=[.72,.72,.7],concR=[.5,.5,.52],mil=[.44,.47,.32],milR=[.35,.38,.27],tentT=[.72,.67,.5],tentW=[.86,.86,.82],
-      steel=[.56,.58,.6],pol=[.46,.52,.62],polR=[.33,.39,.5],fire=[.62,.3,.25],medW=[.88,.88,.85],medR=[.68,.3,.3],
-      sand=[.8,.72,.55],dome=[.46,.52,.52],stone=[.72,.68,.57],stoneR=[.55,.5,.42],ind=[.6,.6,.57],indR=[.46,.47,.48],brick=[.55,.34,.27];
+    const tanW=[.9,.81,.62],terra=[.74,.3,.18],slumW=[.8,.6,.4],slumR=[.58,.38,.24],shedW=[.68,.63,.54],shedR=[.42,.52,.64],
+      conc=[.8,.8,.78],concR=[.44,.5,.58],mil=[.42,.52,.24],milR=[.3,.38,.18],tentT=[.82,.72,.48],tentW=[.93,.93,.88],
+      steel=[.54,.6,.68],pol=[.3,.46,.74],polR=[.2,.32,.58],fire=[.8,.24,.18],medW=[.94,.94,.92],medR=[.82,.24,.24],
+      sand=[.88,.76,.52],dome=[.22,.56,.56],stone=[.78,.7,.54],stoneR=[.56,.46,.34],ind=[.64,.64,.62],indR=[.4,.44,.5],brick=[.66,.3,.2];
     const wreckC=s=>/white/.test(s)?[.8,.8,.78]:/orange/.test(s)?[.72,.42,.2]:/red/.test(s)?[.6,.22,.18]:/blue/.test(s)?[.26,.32,.5]:/green/.test(s)?[.3,.42,.28]:/yellow/.test(s)?[.72,.63,.2]:/grey/.test(s)?[.45,.45,.47]:/wine/.test(s)?[.42,.22,.26]:/black/.test(s)?[.2,.2,.22]:/police/.test(s)?[.3,.34,.46]:[.45,.42,.4];
     let h,w,r;const S=(hh,ww,rr)=>{h=hh;w=ww;r=rr||ww};
     if(/wreck/.test(n)){const c=wreckC(n);S(/truck|ikarus/.test(n)?2.7:/trailer|caravan/.test(n)?2.3:1.6,c,c)}
