@@ -2917,7 +2917,7 @@ function navNext(){if(!S.route){toast("No route yet");return}const steps=S.route
 function navBack(){if(!S.route||S.step<=0)return;S.step--;const l=S.route.steps[S.step];setEstPos(S.route.pts[l.a]);focusStep();updateNav();speakStep()}
 
 /* ---------- version + "new version ready" ---------- */
-const APP_VERSION="3.12.9";
+const APP_VERSION="3.13.0";
 document.getElementById("verTag").textContent="v"+APP_VERSION;
 const vNum=v=>String(v).split(".").map(n=>+n||0),newer=(a,b)=>{const x=vNum(a),y=vNum(b);for(let i=0;i<Math.max(x.length,y.length);i++){if((x[i]||0)!==(y[i]||0))return(x[i]||0)>(y[i]||0)}return false};
 async function checkUpdate(){if(!siteLink())return;
@@ -4143,14 +4143,64 @@ function build3D(){const stage=document.getElementById("stage");
     const hx=D.H[j*N+Math.min(N-1,i+1)]-D.H[j*N+Math.max(0,i-1)],hz=D.H[Math.min(N-1,j+1)*N+i]-D.H[Math.max(0,j-1)*N+i],l=Math.hypot(hx,2*c,hz);nor.set([-hx/l,2*c/l,-hz/l],k*3)}
   const idx=new Uint16Array((N-1)*(N-1)*6);let q=0;for(let j=0;j<N-1;j++)for(let i=0;i<N-1;i++){const a=j*N+i;idx.set([a,a+N,a+1,a+1,a+N,a+N+1],q);q+=6}
   const terr={p:buf(pos),n:buf(nor),c:buf(col),b:buf(bas),i:buf(idx,gl.ELEMENT_ARRAY_BUFFER),cnt:idx.length,tex:1};
+  // v3.13: buildings get real per-type height + wall/roof colour from the iZurvive model each one was matched to.
+  // join each TOWN footprint to the nearest loot building (same set, different order) so we know what KIND of building it is
+  const _JG=16,_jbk=new Map();{const LNj=LB.length/4;for(let i=0;i<LNj;i++){const k=((LB[i*4]/_JG)|0)*100003+((LB[i*4+1]/_JG)|0);let a=_jbk.get(k);if(!a)_jbk.set(k,a=[]);a.push(i)}}
+  const _model=(x,y)=>{const gx=(x/_JG)|0,gy=(y/_JG)|0;let bi=-1,bd=64;for(let a=-1;a<=1;a++)for(let cc=-1;cc<=1;cc++){const arr=_jbk.get((gx+a)*100003+(gy+cc));if(!arr)continue;for(const i of arr){const dx=LB[i*4]-x,dy=LB[i*4+1]-y,dd=dx*dx+dy*dy;if(dd<bd){bd=dd;bi=i}}}return bi>=0?opic(bi):null};
+  // model name → [height(m), wallRGB, roofRGB]. keyword order matters: specific before generic.
+  const b3cl=(nm,area)=>{const n=nm||"",dmg=/_dam/.test(n)?.85:1;
+    const tanW=[.82,.76,.63],terra=[.56,.32,.25],slumW=[.73,.6,.45],slumR=[.5,.42,.33],shedW=[.64,.6,.52],shedR=[.5,.52,.55],
+      conc=[.72,.72,.7],concR=[.5,.5,.52],mil=[.44,.47,.32],milR=[.35,.38,.27],tentT=[.72,.67,.5],tentW=[.86,.86,.82],
+      steel=[.56,.58,.6],pol=[.46,.52,.62],polR=[.33,.39,.5],fire=[.62,.3,.25],medW=[.88,.88,.85],medR=[.68,.3,.3],
+      sand=[.8,.72,.55],dome=[.46,.52,.52],stone=[.72,.68,.57],stoneR=[.55,.5,.42],ind=[.6,.6,.57],indR=[.46,.47,.48],brick=[.55,.34,.27];
+    const wreckC=s=>/white/.test(s)?[.8,.8,.78]:/orange/.test(s)?[.72,.42,.2]:/red/.test(s)?[.6,.22,.18]:/blue/.test(s)?[.26,.32,.5]:/green/.test(s)?[.3,.42,.28]:/yellow/.test(s)?[.72,.63,.2]:/grey/.test(s)?[.45,.45,.47]:/wine/.test(s)?[.42,.22,.26]:/black/.test(s)?[.2,.2,.22]:/police/.test(s)?[.3,.34,.46]:[.45,.42,.4];
+    let h,w,r;const S=(hh,ww,rr)=>{h=hh;w=ww;r=rr||ww};
+    if(/wreck/.test(n)){const c=wreckC(n);S(/truck|ikarus/.test(n)?2.7:/trailer|caravan/.test(n)?2.3:1.6,c,c)}
+    else if(/smokestack/.test(n))S(/big/.test(n)?34:/medium/.test(n)?24:28,brick,brick);
+    else if(/watertower/.test(n))S(/large/.test(n)?21:/medium/.test(n)?16:12,steel,steel);
+    else if(/drilltower|illuminanttower|_crane|radar_tall|hbarriertower|tower_tc/.test(n))S(/radar/.test(n)?18:/crane/.test(n)?24:/hbarrier/.test(n)?10:16,steel,steel);
+    else if(/minaret/.test(n))S(22,sand,dome);
+    else if(/mosque/.test(n))S(/main/.test(n)?13:/gate/.test(n)?8:6,sand,dome);
+    else if(/firestation/.test(n))S(8,fire,[.4,.2,.18]);
+    else if(/policestation/.test(n))S(/large/.test(n)?9:6,pol,polR);
+    else if(/hospital/.test(n))S(14,medW,medR);
+    else if(/healthcare|medical/.test(n))S(/tent/.test(n)?3.4:5,/tent/.test(n)?tentW:medW,medR);
+    else if(/bunker/.test(n))S(3,conc,concR);
+    else if(/houseblock/.test(n))S(/corner/.test(n)?9:10,conc,concR);
+    else if(/office1|office2/.test(n))S(14,conc,concR);
+    else if(/villa|tajbegpalace|caravanserai|researchinstitute|castle|bastion/.test(n))S(/palace|institute/.test(n)?15:10,stone,stoneR);
+    else if(/mausoleum/.test(n))S(5,stone,dome);
+    else if(/watchtower|guardtower|fortified_nest/.test(n))S(10,mil,milR);
+    else if(/barracks|airfield_hq|mil_atc|tisy_hq/.test(n))S(/atc/.test(n)?12:/hq/.test(n)?8:5,mil,milR);
+    else if(/mil_tent|refugee_tent|tradtent/.test(n))S(3.4,tentT,tentT);
+    else if(/mil_guard|guardhouse|guardbox|guardshed|border_0/.test(n))S(3.2,mil,milR);
+    else if(/containerhabitat|refugee_container/.test(n))S(3,steel,steel);
+    else if(/container_/.test(n))S(2.6,[.55,.5,.45],[.5,.46,.42]);
+    else if(/fuelstation/.test(n))S(5,conc,concR);
+    else if(/cementworks|factory|workshop|powerplant|sawmill_build|quarry|repair_center|power_station|water_station|farm_hopper|rocketbase|kirovdam_power|kirovdam_outlet/.test(n))S(/cementworks|factory|fueltank/.test(n)?12:8,ind,indR);
+    else if(/garage/.test(n))S(/tall/.test(n)?6:/big|row_big/.test(n)?4.5:3.5,conc,concR);
+    else if(/store|busstation_building/.test(n))S(5,tanW,terra);
+    else if(/shed/.test(n))S(/closed(2|_)?$|closed2/.test(n)?3.6:3,shedW,shedR);
+    else if(/slum_house/.test(n))S(3.3,slumW,slumR);
+    else if(/house_3/.test(n))S(10.5,tanW,terra);
+    else if(/house_2/.test(n))S(7.5,tanW,terra);
+    else if(/house_1|kirovdam_house/.test(n))S(4.6,tanW,terra);
+    else if(/construction_crane/.test(n))S(24,steel,steel);
+    else if(/construction/.test(n))S(8,[.7,.66,.55],[.5,.47,.42]);
+    else if(/scaffolding/.test(n))S(6,steel,steel);
+    else if(/hangar/.test(n))S(11,ind,indR);
+    else if(/bazaar/.test(n))S(4,sand,terra);
+    else if(/busstop|toilet|woodencrate|tunnel_/.test(n))S(/woodencrate/.test(n)?1.2:/tunnel/.test(n)?3:2.6,shedW,shedR);
+    else{if(area<16)S(2.4,shedW,shedR);else if(area<120)S(4.6,tanW,terra);else if(area<400)S(7,conc,concR);else S(10,conc,concR)}
+    return[h*dmg,w,r]};
   // buildings as blocks, chunked to stay under 65,536 vertices each
   const chunks=[];{const per=3200,NB=TOWN.length/5;for(let s=0;s<NB;s+=per){const e=Math.min(NB,s+per),n=e-s,P_=new Float32Array(n*60),N_=new Float32Array(n*60),C_=new Float32Array(n*60),B_=new Float32Array(n*20),I_=new Uint16Array(n*30);
-    for(let b=0;b<n;b++){const t=(s+b)*5,x=TOWN[t],y=TOWN[t+1],r=TOWN[t+2]*Math.PI/180,w=TOWN[t+3]/4,l=TOWN[t+4]/4,cs=Math.cos(r),sn=Math.sin(r),small=w*l<16,
-      hh=small?1.8:Math.max(3,Math.min(18,3+Math.sqrt(w*l)*.35)),g=hAt(x,y),cr=small?[.45,.42,.4]:[.86,.82,.72];
+    for(let b=0;b<n;b++){const t=(s+b)*5,x=TOWN[t],y=TOWN[t+1],r=TOWN[t+2]*Math.PI/180,w=TOWN[t+3]/4,l=TOWN[t+4]/4,cs=Math.cos(r),sn=Math.sin(r),
+      cl=b3cl(_model(x,y),w*l),hh=cl[0],wall=cl[1],roof=cl[2],g=hAt(x,y);
       const corner=(lx,lz)=>[x+lx*cs+lz*sn,y-(-lx*sn+lz*cs)],cn=[corner(-w/2,-l/2),corner(w/2,-l/2),corner(w/2,l/2),corner(-w/2,l/2)];
-      let v=b*20;const put=(pt,yy,nm,shd)=>{P_.set([pt[0],yy,pt[1]],v*3);N_.set(nm,v*3);C_.set(cr.map(k=>k*shd),v*3);B_[v]=g;v++};
-      const b0=b*20;cn.forEach(p=>put(p,hh,[0,1,0],1));
-      for(let f=0;f<4;f++){const A=cn[f],Bp=cn[(f+1)%4],dx=Bp[0]-A[0],dz=Bp[1]-A[1],L=Math.hypot(dx,dz)||1,nm=[dz/L,0,-dx/L];put(A,-2,nm,.9);put(Bp,-2,nm,.9);put(Bp,hh,nm,.9);put(A,hh,nm,.9)}
+      let v=b*20;const put=(pt,yy,nm,shd,col)=>{P_.set([pt[0],yy,pt[1]],v*3);N_.set(nm,v*3);C_.set([col[0]*shd,col[1]*shd,col[2]*shd],v*3);B_[v]=g;v++};
+      const b0=b*20;cn.forEach(p=>put(p,hh,[0,1,0],1,roof));
+      for(let f=0;f<4;f++){const A=cn[f],Bp=cn[(f+1)%4],dx=Bp[0]-A[0],dz=Bp[1]-A[1],L=Math.hypot(dx,dz)||1,nm=[dz/L,0,-dx/L];put(A,-2,nm,.78,wall);put(Bp,-2,nm,.78,wall);put(Bp,hh,nm,.96,wall);put(A,hh,nm,.96,wall)}
       I_.set([b0,b0+1,b0+2,b0,b0+2,b0+3],b*30);for(let f=0;f<4;f++){const o=b0+4+f*4;I_.set([o,o+1,o+2,o,o+2,o+3],b*30+6+f*6)}}
     chunks.push({p:buf(P_),n:buf(N_),c:buf(C_),b:buf(B_),i:buf(I_,gl.ELEMENT_ARRAY_BUFFER),cnt:I_.length,tex:0})}}
   // textures: ground picture (Map or Satellite) + the "drape" (everything the flat map draws on top)

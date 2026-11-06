@@ -231,6 +231,12 @@
    "shots": 1884,
    "version": "3.12.5",
    "note": "2 shots had an iZurvive.com watermark baked in; painted out"
+  },
+  {
+   "day": 12,
+   "date": "2026-11-06",
+   "work": "3D view: every building now gets real height + wall/roof colour from its matched iZurvive model (13,717 buildings joined to loot models by position). Towers, mosques, apartment blocks rise above low houses/sheds; wrecks sit flat.",
+   "version": "3.13.0"
   }
  ],
  "next_towns": [],
