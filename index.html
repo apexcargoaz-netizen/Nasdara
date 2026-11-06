@@ -2917,7 +2917,7 @@ function navNext(){if(!S.route){toast("No route yet");return}const steps=S.route
 function navBack(){if(!S.route||S.step<=0)return;S.step--;const l=S.route.steps[S.step];setEstPos(S.route.pts[l.a]);focusStep();updateNav();speakStep()}
 
 /* ---------- version + "new version ready" ---------- */
-const APP_VERSION="3.13.0";
+const APP_VERSION="3.13.2";
 document.getElementById("verTag").textContent="v"+APP_VERSION;
 const vNum=v=>String(v).split(".").map(n=>+n||0),newer=(a,b)=>{const x=vNum(a),y=vNum(b);for(let i=0;i<Math.max(x.length,y.length);i++){if((x[i]||0)!==(y[i]||0))return(x[i]||0)>(y[i]||0)}return false};
 async function checkUpdate(){if(!siteLink())return;
@@ -4193,16 +4193,46 @@ function build3D(){const stage=document.getElementById("stage");
     else if(/busstop|toilet|woodencrate|tunnel_/.test(n))S(/woodencrate/.test(n)?1.2:/tunnel/.test(n)?3:2.6,shedW,shedR);
     else{if(area<16)S(2.4,shedW,shedR);else if(area<120)S(4.6,tanW,terra);else if(area<400)S(7,conc,concR);else S(10,conc,concR)}
     return[h*dmg,w,r]};
-  // buildings as blocks, chunked to stay under 65,536 vertices each
-  const chunks=[];{const per=3200,NB=TOWN.length/5;for(let s=0;s<NB;s+=per){const e=Math.min(NB,s+per),n=e-s,P_=new Float32Array(n*60),N_=new Float32Array(n*60),C_=new Float32Array(n*60),B_=new Float32Array(n*20),I_=new Uint16Array(n*30);
-    for(let b=0;b<n;b++){const t=(s+b)*5,x=TOWN[t],y=TOWN[t+1],r=TOWN[t+2]*Math.PI/180,w=TOWN[t+3]/4,l=TOWN[t+4]/4,cs=Math.cos(r),sn=Math.sin(r),
-      cl=b3cl(_model(x,y),w*l),hh=cl[0],wall=cl[1],roof=cl[2],g=hAt(x,y);
-      const corner=(lx,lz)=>[x+lx*cs+lz*sn,y-(-lx*sn+lz*cs)],cn=[corner(-w/2,-l/2),corner(w/2,-l/2),corner(w/2,l/2),corner(-w/2,l/2)];
-      let v=b*20;const put=(pt,yy,nm,shd,col)=>{P_.set([pt[0],yy,pt[1]],v*3);N_.set(nm,v*3);C_.set([col[0]*shd,col[1]*shd,col[2]*shd],v*3);B_[v]=g;v++};
-      const b0=b*20;cn.forEach(p=>put(p,hh,[0,1,0],1,roof));
-      for(let f=0;f<4;f++){const A=cn[f],Bp=cn[(f+1)%4],dx=Bp[0]-A[0],dz=Bp[1]-A[1],L=Math.hypot(dx,dz)||1,nm=[dz/L,0,-dx/L];put(A,-2,nm,.78,wall);put(Bp,-2,nm,.78,wall);put(Bp,hh,nm,.96,wall);put(A,hh,nm,.96,wall)}
-      I_.set([b0,b0+1,b0+2,b0,b0+2,b0+3],b*30);for(let f=0;f<4;f++){const o=b0+4+f*4;I_.set([o,o+1,o+2,o,o+2,o+3],b*30+6+f*6)}}
-    chunks.push({p:buf(P_),n:buf(N_),c:buf(C_),b:buf(B_),i:buf(I_,gl.ELEMENT_ARRAY_BUFFER),cnt:I_.length,tex:0})}}
+  // v3.13.1: roof shape by type — houses/sheds/stores get gabled roofs, mosques & mausoleums a dome, the rest stay flat.
+  const b3rs=(nm,area)=>{const n=nm||"";
+    if(/tower_tc|drilltower|radar_tall|watchtower|guardtower|illuminanttower|hbarriertower|_crane|fortified_nest/.test(n))return 4;
+    if(/silo|_tank|fueltank|smokestack|watertower|dieselpowerplant/.test(n))return 3;
+    if(/mosque_big_main|mausoleum/.test(n))return 2;
+    if(/house_|slum_house|shed|store|bazaar|kirovdam_house|guardhouse|border_0/.test(n))return 1;
+    if(!n&&area<120)return 1;return 0};
+  // buildings as meshes (variable shape), chunked to stay under 65,536 vertices each
+  const chunks=[];{const NB=TOWN.length/5;let P_=[],N_=[],C_=[],B_=[],I_=[],vb=0;
+    const flush=()=>{if(!P_.length)return;chunks.push({p:buf(new Float32Array(P_)),n:buf(new Float32Array(N_)),c:buf(new Float32Array(C_)),b:buf(new Float32Array(B_)),i:buf(new Uint16Array(I_),gl.ELEMENT_ARRAY_BUFFER),cnt:I_.length,tex:0});P_=[];N_=[];C_=[];B_=[];I_=[];vb=0};
+    const V=(p,col,shd,gg)=>{P_.push(p[0],p[1],p[2]);N_.push(p[3],p[4],p[5]);C_.push(col[0]*shd,col[1]*shd,col[2]*shd);B_.push(gg);return vb++};
+    const nrm=(a,b,c)=>{const ux=b[0]-a[0],uy=b[1]-a[1],uz=b[2]-a[2],vx=c[0]-a[0],vy=c[1]-a[1],vz=c[2]-a[2];let nx=uy*vz-uz*vy,ny=uz*vx-ux*vz,nz=ux*vy-uy*vx;const L=Math.hypot(nx,ny,nz);return L<1e-6?[0,1,0]:[nx/L,ny/L,nz/L]};
+    const QUAD=(A,B,C,D,col,sA,sC,g)=>{const nn=nrm(A,B,C),a=V([...A,...nn],col,sA,g),b=V([...B,...nn],col,sA,g),c=V([...C,...nn],col,sC,g),d=V([...D,...nn],col,sC,g);I_.push(a,b,c,a,c,d)};
+    const TRI=(A,B,C,col,shd,g)=>{const nn=nrm(A,B,C),a=V([...A,...nn],col,shd,g),b=V([...B,...nn],col,shd,g),c=V([...C,...nn],col,shd,g);I_.push(a,b,c)};
+    for(let bi=0;bi<NB;bi++){if(vb>61000)flush();
+      const t=bi*5,x=TOWN[t],y=TOWN[t+1],r=TOWN[t+2]*Math.PI/180,w=TOWN[t+3]/4,l=TOWN[t+4]/4,cs=Math.cos(r),sn=Math.sin(r),
+        mdl=_model(x,y),cl=b3cl(mdl,w*l),hh=cl[0],wall=cl[1],roof=cl[2],style=b3rs(mdl,w*l),g=hAt(x,y);
+      const cor=(lx,lz)=>[x+lx*cs+lz*sn,y-(-lx*sn+lz*cs)],P=(p,yy)=>[p[0],yy,p[1]];
+      const c0=cor(-w/2,-l/2),c1=cor(w/2,-l/2),c2=cor(w/2,l/2),c3=cor(-w/2,l/2),CN=[c0,c1,c2,c3];
+      if(style<3)for(let f=0;f<4;f++){const A=CN[f],Bp=CN[(f+1)%4];QUAD(P(A,-2),P(Bp,-2),P(Bp,hh),P(A,hh),wall,.78,.96,g)}
+      if(style===1){const rh=Math.min(Math.min(w,l)*.5,3.2),hr=hh+rh;let Ra,Rb,eaves,gab;
+        if(w>=l){Ra=cor(-w/2,0);Rb=cor(w/2,0);eaves=[[c0,c1,Rb,Ra],[c2,c3,Ra,Rb]];gab=[[c0,c3,Ra],[c1,c2,Rb]]}
+        else{Ra=cor(0,-l/2);Rb=cor(0,l/2);eaves=[[c0,c3,Rb,Ra],[c1,c2,Rb,Ra]];gab=[[c0,c1,Ra],[c3,c2,Rb]]}
+        eaves.forEach(q=>QUAD(P(q[0],hh),P(q[1],hh),P(q[2],hr),P(q[3],hr),roof,1,1,g));
+        gab.forEach(tr=>TRI(P(tr[0],hh),P(tr[1],hh),P(tr[2],hr),wall,.9,g));
+      }else if(style===2){QUAD(P(c0,hh),P(c1,hh),P(c2,hh),P(c3,hh),roof,1,1,g);
+        const rad=Math.min(w,l)*.4,domeH=Math.min(Math.min(w,l)*.6,8),apex=P(cor(0,0),hh+domeH),ring=[];
+        for(let k=0;k<8;k++){const an=k/8*Math.PI*2;ring.push(P(cor(Math.cos(an)*rad,Math.sin(an)*rad),hh))}
+        for(let k=0;k<8;k++)TRI(apex,ring[k],ring[(k+1)%8],roof,1,g);
+      }else if(style===3){ // round silo / tank: a 10-sided cylinder with a flat cap
+        const seg=10,rad=Math.min(w,l)/2*.98,rg=[];for(let k=0;k<seg;k++){const an=k/seg*Math.PI*2;rg.push(cor(Math.cos(an)*rad,Math.sin(an)*rad))}
+        for(let k=0;k<seg;k++){const A=rg[k],B=rg[(k+1)%seg];QUAD(P(A,-2),P(B,-2),P(B,hh),P(A,hh),wall,.74,.98,g)}
+        for(let k=0;k<seg;k++)TRI(P(cor(0,0),hh),P(rg[k],hh),P(rg[(k+1)%seg],hh),roof,1,g);
+      }else{ // tower / mast: a square column that tapers toward a small top platform
+        const tf=.4,tb=[c0,c1,c2,c3],tt=[cor(-w/2*tf,-l/2*tf),cor(w/2*tf,-l/2*tf),cor(w/2*tf,l/2*tf),cor(-w/2*tf,l/2*tf)];
+        for(let f=0;f<4;f++)QUAD(P(tb[f],-2),P(tb[(f+1)%4],-2),P(tt[(f+1)%4],hh),P(tt[f],hh),wall,.78,.98,g);
+        QUAD(P(tt[0],hh),P(tt[1],hh),P(tt[2],hh),P(tt[3],hh),roof,1,1,g);
+      }
+    }
+    flush()}
   // textures: ground picture (Map or Satellite) + the "drape" (everything the flat map draws on top)
   const mkTex=()=>{const t=gl.createTexture();gl.bindTexture(gl.TEXTURE_2D,t);gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,1,1,0,gl.RGBA,gl.UNSIGNED_BYTE,new Uint8Array([200,190,160,0]));
     gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MIN_FILTER,gl.LINEAR);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_S,gl.CLAMP_TO_EDGE);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_T,gl.CLAMP_TO_EDGE);return t};

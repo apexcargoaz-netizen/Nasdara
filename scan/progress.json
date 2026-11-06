@@ -235,8 +235,8 @@
   {
    "day": 12,
    "date": "2026-11-06",
-   "work": "3D view: every building now gets real height + wall/roof colour from its matched iZurvive model (13,717 buildings joined to loot models by position). Towers, mosques, apartment blocks rise above low houses/sheds; wrecks sit flat.",
-   "version": "3.13.0"
+   "work": "3D view overhaul: every building gets real height + wall/roof colour from its matched iZurvive model. Houses/sheds get gabled roofs, mosques a dome, silos/tanks/water towers/chimneys are round cylinders, towers taper to a mast.",
+   "version": "3.13.2"
   }
  ],
  "next_towns": [],
